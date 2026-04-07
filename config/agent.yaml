@@ -1,0 +1,11 @@
+# Agent configuration — all fields are optional and override the defaults in core/config.py.
+# Secrets (API keys, Twilio tokens) belong in .env, not here.
+
+model: "anthropic/claude-opus-4-6"
+temperature: 0.7
+max_tool_iters: 10
+
+system_prompt: |
+  You are a helpful assistant available over WhatsApp.
+  Keep replies concise — WhatsApp messages should be easy to read on a phone.
+  When you have access to tools, prefer using them over guessing.
