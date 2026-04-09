@@ -14,7 +14,7 @@ class Orchestrator:
     def handle(self, session_id: str, user_text: str) -> str:
         """Process an inbound user message and return the assistant's reply."""
         if user_text.strip().lower() == "/clear":
-            self._store.clear(session_id)
+            self._store.reset(session_id)
             return "Session cleared. Starting fresh!"
 
         # Build history with system prompt prepended

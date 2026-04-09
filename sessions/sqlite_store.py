@@ -44,10 +44,18 @@ class SQLiteSessionStore(SessionStore):
 
     def get_history(self, session_id: str) -> list[Message]:
         with self._conn() as con:
+            # Find the id of the most recent reset marker, if any
+            reset_row = con.execute(
+                "SELECT MAX(id) as last_id FROM messages "
+                "WHERE session_id = ? AND role = 'session_reset'",
+                (session_id,),
+            ).fetchone()
+            after_id = reset_row["last_id"] or 0
+
             rows = con.execute(
                 "SELECT role, content, tool_calls, tool_call_id, name "
-                "FROM messages WHERE session_id = ? ORDER BY id",
-                (session_id,),
+                "FROM messages WHERE session_id = ? AND id > ? ORDER BY id",
+                (session_id, after_id),
             ).fetchall()
 
         messages: list[Message] = []
@@ -92,6 +100,9 @@ class SQLiteSessionStore(SessionStore):
                 ),
             )
 
-    def clear(self, session_id: str) -> None:
+    def reset(self, session_id: str) -> None:
         with self._conn() as con:
-            con.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            con.execute(
+                "INSERT INTO messages (session_id, role) VALUES (?, 'session_reset')",
+                (session_id,),
+            )

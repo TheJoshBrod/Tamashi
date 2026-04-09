@@ -13,5 +13,6 @@ class SessionStore(ABC):
         """Persist a single message to the session."""
 
     @abstractmethod
-    def clear(self, session_id: str) -> None:
-        """Delete all history for a session."""
+    def reset(self, session_id: str) -> None:
+        """Insert a session boundary marker. History before it is preserved in
+        the DB but excluded from future context retrieval."""
