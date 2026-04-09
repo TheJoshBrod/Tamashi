@@ -4,7 +4,7 @@ from core.schemas import Message
 from providers.base import BaseProvider
 from sessions.base import SessionStore
 from tools.registry import registry
-
+from core.context import session_id_var
 
 class Orchestrator:
     def __init__(self, provider: BaseProvider, store: SessionStore) -> None:
@@ -13,6 +13,9 @@ class Orchestrator:
 
     def handle(self, session_id: str, user_text: str) -> str:
         """Process an inbound user message and return the assistant's reply."""
+        # Attach the session_id to the asyncio context so decoupled subagents can natively log out to the DB
+        session_id_var.set(session_id)
+        
         if user_text.strip().lower() == "/clear":
             self._store.reset(session_id)
             return "Session cleared. Starting fresh!"

@@ -54,7 +54,7 @@ class SQLiteSessionStore(SessionStore):
 
             rows = con.execute(
                 "SELECT role, content, tool_calls, tool_call_id, name "
-                "FROM messages WHERE session_id = ? AND id > ? ORDER BY id",
+                "FROM messages WHERE session_id = ? AND id > ? AND role IN ('system', 'user', 'assistant', 'tool') ORDER BY id",
                 (session_id, after_id),
             ).fetchall()
 

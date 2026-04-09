@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tools  # noqa: F401 — triggers @tool decorator discovery
+import subagents  # triggers define_subagent discovery
 
 from fastapi import FastAPI
 from core.config import settings
