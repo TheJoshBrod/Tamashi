@@ -1,13 +1,13 @@
 # Tamashi (魂)
 
-A modular, personal LLM-over-WhatsApp framework designed for low-friction tool use and emotional UI feedback. 
+A modular, personal LLM messaging framework designed for low-friction tool use, emotional UI feedback, and multi-platform extensibility.
 
 ## Naming
 Tamashi (魂) means "soul" or "spirit" in Japanese. The project draws inspiration from the "ghost in the machine" concept popularized by Ghost in the Shell—an intelligent presence operating within a digital shell.
 
 ## Core Features
-- **WhatsApp Interface**: Interact with your personal agent through Twilio.
-- **Emotional UI**: A dedicated websocket-driven dashboard features a reactive creature that changes its "face" based on the agent's internal state (thinking, searching, calculating, or logging nutrition).
+- **Multi-Platform Interfaces**: Communicate with your personal agent through any messaging channel (WhatsApp, Discord, Slack, etc.).
+- **Emotional UI**: A dedicated websocket-driven dashboard features a reactive creature that changes its "face" based on the agent's internal state.
 - **Subagent Architecture**: Specialized loops for tasks like nutrition logging that maintain their own memory and tool sets.
 - **SQL Persistence**: All conversation history and subagent data (e.g., meals) are stored in SQLite for easy local querying.
 - **Tool Discovery**: Drop any Python function into `tools/` and it becomes available to the agent via automatic JSON schema generation.
