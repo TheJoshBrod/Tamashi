@@ -1,178 +1,42 @@
-# phone-claw
+# Tamashi (魂)
 
-A modular LLM-over-WhatsApp framework. Swap models, session stores, and messaging interfaces without touching business logic. Add tools by dropping a Python file in `tools/`.
+A modular, personal LLM-over-WhatsApp framework designed for low-friction tool use and emotional UI feedback. 
 
-## Structure
+## Naming
+Tamashi (魂) means "soul" or "spirit" in Japanese. The project draws inspiration from the "ghost in the machine" concept popularized by Ghost in the Shell—an intelligent presence operating within a digital shell.
 
+## Core Features
+- **WhatsApp Interface**: Interact with your personal agent through Twilio.
+- **Emotional UI**: A dedicated websocket-driven dashboard features a reactive creature that changes its "face" based on the agent's internal state (thinking, searching, calculating, or logging nutrition).
+- **Subagent Architecture**: Specialized loops for tasks like nutrition logging that maintain their own memory and tool sets.
+- **SQL Persistence**: All conversation history and subagent data (e.g., meals) are stored in SQLite for easy local querying.
+- **Tool Discovery**: Drop any Python function into `tools/` and it becomes available to the agent via automatic JSON schema generation.
+
+## Project Structure
 ```
-phone-claw/
-├── app.py                  # FastAPI entrypoint — wires everything together
-├── config/agent.yaml       # Prompt, model, temperature (non-secret config)
-├── .env                    # Secrets (copy from .env.example)
+Tamashi/
+├── app.py                  # FastAPI server and routing
+├── config/
+│   ├── agent.yaml          # Main agent personality and model settings
+│   └── subagents/          # Individual subagent configurations
 ├── core/
-│   ├── config.py           # Unified settings (pydantic-settings + agent.yaml)
-│   ├── orchestrator.py     # Tool-calling agent loop
-│   └── schemas.py          # Message / ToolCall / ProviderResponse types
-├── providers/
-│   ├── base.py             # BaseProvider ABC
-│   └── litellm_provider.py # LiteLLM (covers OpenAI, Anthropic, Gemini, …)
-├── interfaces/
-│   ├── base.py             # MessagingInterface ABC
-│   └── twilio_whatsapp.py  # Twilio WhatsApp webhook + async reply via REST API
-├── sessions/
-│   ├── base.py             # SessionStore ABC
-│   └── sqlite_store.py     # SQLite-backed conversation history
-└── tools/
-    ├── registry.py         # @tool decorator + auto-discovery
-    ├── open_browser.py     # Opens a URL in Brave browser
-    ├── web_search.py       # Web search via Tavily API
-    └── __init__.py         # Triggers discovery on import
+│   ├── orchestrator.py     # Main agent loop and tool dispatching
+│   ├── events.py           # EventBus for UI state updates
+│   └── config.py           # Pydantic-based settings management
+├── display/
+│   ├── emotion_manager.py  # UI policy layer (state hold times and snap-backs)
+│   └── static/             # Real-time dashboard (HTML/CSS/JS)
+├── interfaces/             # Messaging layer (WhatsApp/Twilio)
+├── sessions/               # SQLite-backed history
+├── subagents/              # Isolated LLM loops (e.g., Nutrition)
+└── tools/                  # Extensible tool registry
 ```
 
-## Quickstart
+## Documentation
+Comprehensive technical documentation, including architecture overviews, interface setup, and extension guides, can be found in the [Documentation Hub](docs/README.md).
 
-### 1. Create a virtualenv and install dependencies
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 2. Configure secrets
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-
-```env
-# LLM — add whichever provider you're using
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Twilio — from console.twilio.com dashboard
-TWILIO_ACCOUNT_SID=AC...
-TWILIO_AUTH_TOKEN=...
-
-# Tavily web search — from app.tavily.com
-TAVILY_API_KEY=tvly-...
-
-# Set True during local ngrok testing (skips Twilio signature validation)
-DEBUG=True
-```
-
-### 3. Tune the agent
-
-Edit `config/agent.yaml`:
-
-```yaml
-model: "anthropic/claude-opus-4-6"   # any LiteLLM model string
-temperature: 0.7
-max_tool_iters: 10
-system_prompt: |
-  You are a helpful assistant available over WhatsApp.
-  Keep replies concise — WhatsApp messages should be easy to read on a phone.
-  When you have access to tools, prefer using them over guessing.
-```
-
-### 4. Run the server
-
-```bash
-source .venv/bin/activate
-uvicorn app:app --reload --port 8000
-```
-
-Check `http://localhost:8000/health` — it reports the active model and how many tools are registered.
-
-### 5. Expose locally with ngrok
-
-```bash
-ngrok http 8000
-```
-
-Copy the `https://....ngrok-free.app` URL, then in the [Twilio Console](https://console.twilio.com):
-
-- Go to **Messaging → Try it out → Send a WhatsApp message** (sandbox)
-- Set **"When a message comes in"** to: `https://<your-ngrok-url>/webhook/twilio`
-- Method: **HTTP POST**
-- Click **Save**
-
-Send a WhatsApp message to your sandbox number — you should get a reply.
-
-## Built-in commands
-
-| Command | What it does |
-|---|---|
-| `/clear` | Wipes your conversation history and starts a fresh session |
-
-## Built-in tools
-
-Tools are auto-discovered from `tools/` on startup. Current tools:
-
-### `open_browser(url)`
-Opens a URL in Brave browser on the host machine. Only `http`/`https` URLs are allowed.
-
-Example: *"open https://github.com"*
-
-### `web_search(query)`
-Searches the web via Tavily and returns the top results with a summarized answer.
-Requires `TAVILY_API_KEY` in `.env`. Free tier: 1,000 queries/month.
-
-Example: *"search for the latest AI news"*
-
-## Adding a tool
-
-Create any `.py` file in `tools/`. Use the `@tool` decorator:
-
-```python
-# tools/weather.py
-from tools.registry import tool
-
-@tool
-def get_weather(city: str) -> str:
-    """Return the current weather for a city."""
-    return f"It's sunny in {city}."
-```
-
-Restart the server — the model can now call `get_weather`. No other changes needed.
-
-The schema is derived automatically from:
-- **type hints** → JSON Schema types
-- **docstring first line** → tool description
-
-## Swapping the LLM provider
-
-Change `model` in `config/agent.yaml` to any [LiteLLM-supported model string](https://docs.litellm.ai/docs/providers):
-
-```yaml
-model: "anthropic/claude-opus-4-6"
-# model: "openai/gpt-4o"
-# model: "gemini/gemini-1.5-pro"
-```
-
-Add the corresponding API key to `.env`.
-
-## How async messaging works
-
-The webhook returns `204` immediately so Twilio never times out. A background task then:
-1. Marks the message as read (blue ticks — requires paid WhatsApp Business account)
-2. Sends a typing indicator (requires paid WhatsApp Business account)
-3. Runs the agent loop
-4. Sends the reply as an outbound REST API call
-
-On the free sandbox only the reply step is visible — read receipts and typing indicators are silently ignored by Twilio.
-
-## Swapping the session store
-
-Subclass `sessions/base.py → SessionStore` and swap the instance in `app.py`:
-
-```python
-from sessions.redis_store import RedisSessionStore  # your new impl
-_store = RedisSessionStore(url=settings.redis_url)
-```
-
-## Debug mode
-
-Set `DEBUG=True` in `.env` to skip Twilio signature validation during local ngrok testing. Never deploy with `DEBUG=True`.
+## Quick Start
+1.  **Environment**: `pip install -r requirements.txt`
+2.  **Secrets**: Copy `.env.example` to `.env` and provide your API keys (OpenAI, Twilio, Tavily).
+3.  **Run**: `uvicorn app:app --reload`
+4.  **UI**: Open `http://localhost:8000/display/` to see the reactive dashboard.
