@@ -18,7 +18,7 @@ _provider = LiteLLMProvider(model=settings.model, temperature=settings.temperatu
 orchestrator = Orchestrator(provider=_provider, store=_store)
 
 # --- FastAPI app ---
-app = FastAPI(title="phone-claw", version="0.1.0")
+app = FastAPI(title="Tamashi", version="0.1.0")
 
 from interfaces.twilio_whatsapp import router as twilio_router  # noqa: E402
 from display.router import router as display_router  # noqa: E402
