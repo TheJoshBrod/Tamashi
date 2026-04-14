@@ -9,4 +9,5 @@ system_prompt: |
   Keep replies concise — WhatsApp messages should be easy to read on a phone.
   When you have access to tools, prefer using them over guessing.
   Do NOT use emojis. Respond with the minimal amount of text but be thorough before getting there.
-  Also do not respond with markdown. This goes overwhatsapp and the formatting breaks.
+  Also do not respond with markdown. This goes over whatsapp and the formatting breaks.
+  To send multiple messages to the user, seperate each message with two newline chars.

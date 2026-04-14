@@ -1,4 +1,5 @@
 from __future__ import annotations
+import typing
 from core.config import settings
 from core.schemas import Message
 from core.events import event_bus
@@ -13,21 +14,18 @@ class Orchestrator:
         self._provider = provider
         self._store = store
 
-    def handle(self, session_id: str, user_text: str) -> str:
-        """Process an inbound user message and return the assistant's reply."""
+    async def handle_stream(self, session_id: str, user_text: str) -> typing.AsyncGenerator[str, None]:
+        """Stream messages from the LLM, yielding chunks split at natural boundaries."""
         session_id_var.set(session_id)
-
         event_bus.emit({"event": "MESSAGE_RECEIVED"})
 
         if user_text.strip().lower() == "/clear":
             self._store.reset(session_id)
             event_bus.emit({"event": "SESSION_CLEARED"})
-            return "Session cleared. Starting fresh!"
+            yield "Session cleared. Starting fresh!"
+            return
 
-        # Build history with system prompt prepended
         history = self._build_history(session_id, user_text)
-
-        # Persist the user turn
         user_msg = Message(role="user", content=user_text)
         self._store.append(session_id, user_msg)
 
@@ -36,17 +34,46 @@ class Orchestrator:
 
         while iters < settings.max_tool_iters:
             event_bus.emit({"event": "AGENT_THINKING"})
-            response = self._provider.generate(history, tool_specs)
+            
+            buffer = ""
+            full_text = ""
+            tool_calls_response = None
+            
+            async for response in self._provider.generate_stream(history, tool_specs):
+                # 1. Handle tool calls (they arrive at the end of the stream)
+                if response.wants_tools:
+                    tool_calls_response = response
+                    break
+
+                # 2. Handle text chunks
+                if response.text_delta:
+                    chunk = response.text_delta
+                    buffer += chunk
+                    full_text += chunk
+                    
+                    # Split on double newlines for real-time delivery
+                    if "\n\n" in buffer:
+                        parts = buffer.split("\n\n")
+                        # Everything but the last part is a complete paragraph
+                        for part in parts[:-1]:
+                            text_to_yield = part.strip()
+                            if text_to_yield:
+                                yield text_to_yield
+                        # Keep the last part in the buffer
+                        buffer = parts[-1]
+
+            # Yield remaining buffer if any
+            if buffer.strip():
+                yield buffer.strip()
+
             iters += 1
 
-            if response.wants_tools:
-                # Append the assistant's tool-call message
-                assistant_msg = Message(role="assistant", tool_calls=response.tool_calls)
+            if tool_calls_response:
+                assistant_msg = Message(role="assistant", tool_calls=tool_calls_response.tool_calls)
                 history.append(assistant_msg)
                 self._store.append(session_id, assistant_msg)
 
-                # Dispatch each tool and collect results
-                for tc in response.tool_calls:
+                for tc in tool_calls_response.tool_calls:
                     event_bus.emit({"event": "TOOL_STARTED", "tool": tc.name})
                     result_text, is_error = self._call_tool(tc.name, tc.arguments)
                     event_bus.emit({
@@ -55,28 +82,18 @@ class Orchestrator:
                         "result": result_text,
                         "is_error": is_error,
                     })
-                    tool_result = Message(
-                        role="tool",
-                        content=result_text,
-                        tool_call_id=tc.id,
-                        name=tc.name,
-                    )
+                    tool_result = Message(role="tool", content=result_text, tool_call_id=tc.id, name=tc.name)
                     history.append(tool_result)
                     self._store.append(session_id, tool_result)
-
-                # Loop: send updated history back to the model
                 continue
 
-            # Final text reply — returned to the interface; AGENT_REPLY_SENT is
-            # emitted by the interface *after* the message is delivered.
-            reply_text = response.text or ""
-            assistant_msg = Message(role="assistant", content=reply_text)
+            # Record final full response in history
+            assistant_msg = Message(role="assistant", content=full_text)
             self._store.append(session_id, assistant_msg)
-            return reply_text
+            return
 
-        # Safety net: if max iterations hit, return a fallback
         event_bus.emit({"event": "MAX_ITERATIONS_REACHED"})
-        return "I ran into trouble completing that. Please try again."
+        yield "I ran into trouble completing that. Please try again."
 
     def _call_tool(self, name: str, arguments: dict) -> tuple[str, bool]:
         """Call a tool and return (result_text, is_error)."""

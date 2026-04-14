@@ -93,15 +93,21 @@ async def _process(
     # 2. Typing indicator — show the "..." bubble while the LLM thinks
     _send_typing(from_whatsapp, to_whatsapp)
 
-    # 3. Run the agent (blocking, so yield to event loop briefly first)
-    await asyncio.sleep(0)
-    reply_text = await asyncio.to_thread(orchestrator.handle, session_id, user_text)
+    # 3. Run the agent stream
+    full_reply = ""
+    async for reply_chunk in orchestrator.handle_stream(session_id, user_text):
+        if not reply_chunk:
+            continue
+        
+        # Send each chunk as a separate WhatsApp message
+        await asyncio.to_thread(_reply, from_whatsapp, to_whatsapp, reply_chunk)
+        full_reply += reply_chunk + "\n\n"
+        
+        # Optional: slight delay between messages for "typing" feel
+        await asyncio.sleep(0.5)
 
-    # 4. Send the reply as an outbound message
-    await asyncio.to_thread(_reply, from_whatsapp, to_whatsapp, reply_text)
-
-    # 5. Signal reply delivered — EmotionManager triggers classifier + IDLE timer
-    event_bus.emit({"event": "AGENT_REPLY_SENT", "user_text": user_text, "reply": reply_text})
+    # 4. Signal final completion
+    event_bus.emit({"event": "AGENT_REPLY_SENT", "user_text": user_text, "reply": full_reply.strip()})
 
 
 @router.post("/webhook/twilio")

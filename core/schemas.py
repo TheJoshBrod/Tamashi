@@ -62,6 +62,7 @@ class ToolSpec:
 @dataclass
 class ProviderResponse:
     text: str | None = None
+    text_delta: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
 
     @property
