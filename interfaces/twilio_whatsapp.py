@@ -85,6 +85,7 @@ async def _process(
     to_whatsapp: str,     # e.g. "whatsapp:+1..."          (the user's number)
 ) -> None:
     from app import orchestrator
+    from core.events import event_bus
 
     # 1. Blue ticks — tell WhatsApp we've seen the message
     _mark_read(message_sid)
@@ -98,6 +99,9 @@ async def _process(
 
     # 4. Send the reply as an outbound message
     await asyncio.to_thread(_reply, from_whatsapp, to_whatsapp, reply_text)
+
+    # 5. Signal reply delivered — EmotionManager triggers classifier + IDLE timer
+    event_bus.emit({"event": "AGENT_REPLY_SENT", "user_text": user_text, "reply": reply_text})
 
 
 @router.post("/webhook/twilio")

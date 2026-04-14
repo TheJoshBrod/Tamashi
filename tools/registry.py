@@ -61,7 +61,7 @@ def _build_spec(fn: Callable) -> ToolSpec:
     if required:
         schema["required"] = required
 
-    description = (inspect.getdoc(fn) or fn.__name__).split("\n")[0]
+    description = inspect.getdoc(fn) or fn.__name__
     return ToolSpec(name=fn.__name__, description=description, parameters=schema)
 
 

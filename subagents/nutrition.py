@@ -24,7 +24,7 @@ def init_db():
 
 init_db()
 
-def log_meal_data(calories: int, protein_g: int, carbs_g: int, fat_g: int, summary: str, original_description: str) -> str:
+def log_meal_data(calories: int, protein_g: int, carbs_g: int, fat_g: int, summary: str, log_text: str) -> str:
     """Saves the fully parsed nutritional macro data to the database."""
     try:
         timestamp = datetime.now().isoformat()
@@ -32,7 +32,7 @@ def log_meal_data(calories: int, protein_g: int, carbs_g: int, fat_g: int, summa
             conn.execute('''
                 INSERT INTO meals (timestamp, log_text, calories, protein_g, carbs_g, fat_g, summary)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (timestamp, original_description, calories, protein_g, carbs_g, fat_g, summary))
+            ''', (timestamp, log_text, calories, protein_g, carbs_g, fat_g, summary))
         return f"Logged meal successfully: {calories} kcal | {protein_g}g P | {carbs_g}g C | {fat_g}g F"
     except Exception as e:
         return f"Error logging data: {e}"
@@ -61,7 +61,7 @@ def query_nutrition_db(sql_query: str) -> str:
     except Exception as e:
         return f"SQL Error: {e}"
 
-def update_meal_data(meal_id: int, calories: int, protein_g: int, carbs_g: int, fat_g: int, summary: str) -> str:
+def update_meal_data(id: int, calories: int, protein_g: int, carbs_g: int, fat_g: int, summary: str) -> str:
     """Updates an existing meal with new macro information."""
     try:
         with sqlite3.connect(DB_PATH) as conn:
@@ -70,24 +70,24 @@ def update_meal_data(meal_id: int, calories: int, protein_g: int, carbs_g: int, 
                 UPDATE meals 
                 SET calories=?, protein_g=?, carbs_g=?, fat_g=?, summary=?
                 WHERE id=?
-            ''', (calories, protein_g, carbs_g, fat_g, summary, meal_id))
+            ''', (calories, protein_g, carbs_g, fat_g, summary, id))
             conn.commit()
             if cur.rowcount == 0:
-                return f"No meal found with id {meal_id}"
-        return f"Updated meal {meal_id} successfully: {calories} kcal | {protein_g}g P | {carbs_g}g C | {fat_g}g F"
+                return f"No meal found with id {id}"
+        return f"Updated meal {id} successfully: {calories} kcal | {protein_g}g P | {carbs_g}g C | {fat_g}g F"
     except Exception as e:
         return f"Error updating data: {e}"
 
-def delete_meal_data(meal_id: int) -> str:
+def delete_meal_data(id: int) -> str:
     """Deletes a meal from history."""
     try:
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
-            cur.execute("DELETE FROM meals WHERE id=?", (meal_id,))
+            cur.execute("DELETE FROM meals WHERE id=?", (id,))
             conn.commit()
             if cur.rowcount == 0:
-                return f"No meal found with id {meal_id}"
-        return f"Deleted meal {meal_id} successfully."
+                return f"No meal found with id {id}"
+        return f"Deleted meal {id} successfully."
     except Exception as e:
         return f"Error deleting data: {e}"
 

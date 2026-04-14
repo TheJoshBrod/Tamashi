@@ -90,11 +90,26 @@ def define_subagent(name: str, tools: list[Callable]):
                     args_dict = json.loads(func_args)
                     if func_name in tools_dict_by_name:
                         func = tools_dict_by_name[func_name]
+                        from core.events import event_bus
+                        event_bus.emit({"event": "TOOL_STARTED", "tool": func_name})
                         result = str(func(**args_dict))
+                        event_bus.emit({
+                            "event": "TOOL_COMPLETED",
+                            "tool": func_name,
+                            "result": result,
+                            "is_error": False
+                        })
                     else:
                         result = f"Error: unknown tool '{func_name}' for this subagent."
                 except Exception as e:
                     result = f"Error executing '{func_name}': {e}"
+                    from core.events import event_bus
+                    event_bus.emit({
+                        "event": "TOOL_COMPLETED",
+                        "tool": func_name,
+                        "result": result,
+                        "is_error": True
+                    })
                     
                 # NATIVELY track the tool execution output back into the DB!
                 if session_id:
