@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     debug: bool = False  # when True, skips Twilio signature validation
     db_path: str = str(_ROOT / "sessions.db")
 
+    # --- memory config ---
+    working_memory_size: int = 10
+    long_term_memory_enabled: bool = True
+    extraction_model: str = "anthropic/claude-haiku-4-5-20251001"
+    memory_context_token_budget: int = 1500
+    vector_db_path: str = str(_ROOT / "memory" / "qdrant")
+
     def model_post_init(self, __context: Any) -> None:
         yaml_data = _load_yaml()
         for key, val in yaml_data.items():
