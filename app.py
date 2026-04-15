@@ -13,9 +13,9 @@ from providers.litellm_provider import LiteLLMProvider
 from sessions.sqlite_store import SQLiteSessionStore
 
 # --- Wire up components ---
-_store = SQLiteSessionStore(db_path=settings.db_path)
+store = SQLiteSessionStore(db_path=settings.db_path)
 _provider = LiteLLMProvider(model=settings.model, temperature=settings.temperature)
-orchestrator = Orchestrator(provider=_provider, store=_store)
+orchestrator = Orchestrator(provider=_provider, store=store)
 
 # --- FastAPI app ---
 app = FastAPI(title="Tamashi", version="0.1.0")

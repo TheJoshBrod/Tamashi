@@ -102,6 +102,16 @@ class Orchestrator:
         return result, is_error
 
     def _build_history(self, session_id: str, user_text: str) -> list[Message]:
-        system = Message(role="system", content=settings.system_prompt)
-        history = self._store.get_history(session_id)
-        return [system, *history, Message(role="user", content=user_text)]
+        system = [Message(role="system", content=settings.system_prompt)]
+
+        if settings.long_term_memory_enabled:
+            try:
+                from memory import bridge
+                recall = bridge.retrieve_context(session_id, query=user_text)
+                if recall:
+                    system.append(Message(role="system", content=recall))
+            except Exception:
+                pass  # memory unavailable — degrade gracefully
+
+        history = self._store.get_history(session_id, limit=settings.working_memory_size)
+        return [*system, *history, Message(role="user", content=user_text)]
