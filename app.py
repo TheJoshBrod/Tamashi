@@ -29,6 +29,8 @@ app.include_router(display_router)
 @app.on_event("startup")
 async def startup_event():
     event_bus.set_main_loop(asyncio.get_running_loop())
+    from display.websocket import manager
+    manager.start_heartbeat()
 
 
 @app.get("/health")
