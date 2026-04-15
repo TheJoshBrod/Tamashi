@@ -89,16 +89,16 @@ class QdrantMemoryStore:
         try:
             from qdrant_client.models import Filter, FieldCondition, MatchValue
             client = self._get_client()
-            results = client.search(
+            response = client.query_points(
                 collection_name=_COLLECTION,
-                query_vector=self._embed(query),
+                query=self._embed(query),
                 query_filter=Filter(
                     must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
                 ),
                 limit=k,
                 with_payload=True,
             )
-            return [r.payload["node_id"] for r in results if r.payload]
+            return [r.payload["node_id"] for r in response.points if r.payload]
         except Exception:
             log.exception("vector search failed for user %s", user_id)
             return []
@@ -110,9 +110,9 @@ class QdrantMemoryStore:
         try:
             from qdrant_client.models import Filter, FieldCondition, MatchValue
             client = self._get_client()
-            results = client.search(
+            response = client.query_points(
                 collection_name=_COLLECTION,
-                query_vector=self._embed(query),
+                query=self._embed(query),
                 query_filter=Filter(
                     must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
                 ),
@@ -122,7 +122,7 @@ class QdrantMemoryStore:
             )
             return [
                 {"node_id": r.payload["node_id"], "score": r.score}
-                for r in results
+                for r in response.points
                 if r.payload
             ]
         except Exception:
