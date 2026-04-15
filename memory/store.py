@@ -78,6 +78,14 @@ class FactStore:
             ).fetchone()
         return row is not None
 
+    def list_users(self) -> list[str]:
+        """Return all user_ids that have stored facts. Used by the nightly linker."""
+        with self._conn() as con:
+            rows = con.execute(
+                "SELECT DISTINCT user_id FROM memory_facts"
+            ).fetchall()
+        return [r["user_id"] for r in rows]
+
     def delete_user(self, user_id: str) -> None:
         """Remove all facts for a user (used in tests and /forget command)."""
         with self._conn() as con:

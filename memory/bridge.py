@@ -1,21 +1,29 @@
-"""Python facade for the Jac memory graph.
+"""Python facade for the Jac memory graph + Qdrant vector store.
 
 Architecture:
   - Jac graph (in-process, via jaclang.lib): fast traversal, walker-based GraphRAG
   - SQLite FactStore (memory/store.py): durable persistence across restarts
+  - Qdrant embedded (memory/vector.py): semantic vector search for Phase 3 retrieval
 
-Write path: ingest_facts → Jac graph (in-process) + SQLite (durable)
-Read path:  retrieve_context → Jac graph if warm; reload from SQLite on cache miss
+Write path:
+  ingest_facts → Jac graph (in-process) + SQLite (durable) + Qdrant (vector index)
+
+Read path (Phase 3 GraphRAG):
+  1. Vector search → seed jids
+  2. RetrieveByJids walker → 1-hop graph expansion
+  3. Fallback to RetrieveFacts if vector store empty
+  4. Deduplicate + token-budget cap in Python
 
 Swapping the graph backend only requires changing this module.
 """
 from __future__ import annotations
 
 import logging
+from core.config import settings
 
 from jaclang.lib import spawn, root
 
-from memory.walkers import GetOrCreateUser, IngestFacts, RetrieveFacts
+from memory.walkers import GetOrCreateUser, IngestFacts, RetrieveFacts, RetrieveByJids
 from memory.store import fact_store
 
 log = logging.getLogger(__name__)
@@ -56,16 +64,17 @@ def _ensure_loaded(user_id: str) -> None:
 
 
 def ingest_facts(user_id: str, facts: list[dict]) -> list[str]:
-    """Write extracted facts into the Jac graph and persist to SQLite.
+    """Write extracted facts into the Jac graph, SQLite, and Qdrant.
 
-    Returns a list of jid strings (one per Fact node) for Phase 3 Qdrant mirroring.
+    Returns a list of jid strings (one per Fact node) for Qdrant mirroring.
+    The caller (consolidator) handles Qdrant upsert after this returns.
     """
     if not facts:
         return []
     _ensure_loaded(user_id)
     user_node = _get_user_node(user_id)
     result = spawn(IngestFacts(facts=facts), user_node)
-    jids: list[str] = result.reports
+    jids: list[str] = [str(j) for j in result.reports]
     # Persist to SQLite so facts survive process restart.
     fact_store.insert(user_id, facts, jids)
     _loaded_users.add(user_id)
@@ -75,15 +84,47 @@ def ingest_facts(user_id: str, facts: list[dict]) -> list[str]:
 def retrieve_context(user_id: str, query: str = "", max_facts: int = 10) -> str:
     """Return a formatted memory block to prepend to the LLM prompt.
 
+    Phase 3 two-step GraphRAG:
+      1. Vector search → seed jids (returns [] if store empty)
+      2. RetrieveByJids walker → 1-hop graph expansion
+      3. Fallback to RetrieveFacts if seeds are empty
+      4. Deduplicate, cap to max_facts, format as bullet list
+
     Returns an empty string if there are no stored facts.
-    Phase 3 will replace the naive walker with vector-seeded GraphRAG.
     """
     _ensure_loaded(user_id)
     user_node = _get_user_node(user_id)
-    result = spawn(RetrieveFacts(max_facts=max_facts), user_node)
+
+    # Step 1: vector search for semantically similar facts
+    seed_jids: list[str] = []
+    if settings.long_term_memory_enabled:
+        try:
+            from memory.vector import vector_store
+            seed_jids = vector_store.search(user_id, query, k=5)
+        except Exception:
+            log.debug("vector search unavailable, falling back to naive retrieval")
+
+    # Step 2: GraphRAG expansion via Jac walker, or naive fallback
+    if seed_jids:
+        result = spawn(RetrieveByJids(seed_jids=seed_jids), user_node)
+    else:
+        result = spawn(RetrieveFacts(max_facts=max_facts), user_node)
+
     if not result.reports:
         return ""
-    lines = [f"- [{r['topic']}] {r['content']}" for r in result.reports]
+
+    # Step 3: deduplicate (RetrieveByJids can report the same neighbor twice)
+    seen: set[str] = set()
+    deduped = []
+    for r in result.reports:
+        key = str(r.get("jid", r.get("content", "")))
+        if key not in seen:
+            seen.add(key)
+            deduped.append(r)
+        if len(deduped) >= max_facts:
+            break
+
+    lines = [f"- [{r['topic']}] {r['content']}" for r in deduped]
     return "Relevant memory:\n" + "\n".join(lines)
 
 

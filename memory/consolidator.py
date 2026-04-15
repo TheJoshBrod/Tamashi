@@ -1,5 +1,6 @@
 """Async consolidation: extract facts from messages that fell out of the FIFO
-working window and ingest them into the long-term Jac graph + SQLite store.
+working window and ingest them into the long-term Jac graph + SQLite store +
+Qdrant vector index.
 
 Called as a fire-and-forget asyncio task after each agent reply.
 """
@@ -41,6 +42,22 @@ async def consolidate_if_needed(session_id: str, store) -> None:
 
         if facts:
             jids = await asyncio.to_thread(bridge.ingest_facts, session_id, facts)
+
+            # Phase 3: mirror each new Fact to the Qdrant vector index
+            if jids:
+                try:
+                    from memory.vector import vector_store
+                    for fact, node_id in zip(facts, jids):
+                        await asyncio.to_thread(
+                            vector_store.upsert,
+                            node_id,
+                            session_id,
+                            "fact",
+                            fact["content"],
+                        )
+                except Exception:
+                    log.warning("vector upsert failed during consolidation (non-fatal)")
+
             event_bus.emit({
                 "event": "MEMORY_CONSOLIDATED",
                 "session_id": session_id,

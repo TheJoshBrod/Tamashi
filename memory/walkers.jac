@@ -43,20 +43,58 @@ walker IngestFacts {
     }
 }
 
-# Retrieve facts for a user — naive most-recent-first (Phase 2).
-# Phase 3 upgrades this to seed-based GraphRAG via RetrieveByJids.
+# Retrieve facts for a user — naive most-recent-first (Phase 2 fallback).
 walker RetrieveFacts {
     has max_facts: int = 10;
 
     can collect with User entry {
         facts = [-->][?:Fact];
-        count = 0;
+        count: int = 0;
         for f in facts {
             if count >= self.max_facts {
                 disengage;
             }
             report {"content": f.content, "topic": f.topic, "jid": jid(f)};
             count = count + 1;
+        }
+    }
+}
+
+# Phase 3: GraphRAG — expand from seed jids via 1-hop graph traversal.
+# seed_jids is a list of jid values (compared directly — no str() cast needed).
+# Python bridge handles deduplication of reported facts.
+walker RetrieveByJids {
+    has seed_jids: list;
+
+    can expand with User entry {
+        for f in [-->][?:Fact] {
+            if jid(f) in self.seed_jids {
+                report {"content": f.content, "topic": f.topic, "jid": jid(f)};
+                for neighbor in [f-->][?:Fact] {
+                    report {"content": neighbor.content, "topic": neighbor.topic, "jid": jid(neighbor)};
+                }
+            }
+        }
+    }
+}
+
+# Phase 3: Draw RelatesTo(kind="similar") edges between Facts found by vector search.
+# target_jids: list of {jid, weight} dicts from Qdrant nearest-neighbor search.
+walker LinkFacts {
+    has src_jid: str;
+    has target_jids: list;
+
+    can link with User entry {
+        for f in [-->][?:Fact] {
+            if jid(f) == self.src_jid {
+                for t in [-->][?:Fact] {
+                    for target in self.target_jids {
+                        if jid(t) == target["jid"] {
+                            f +>: RelatesTo(kind="similar", weight=float(target["weight"])) :+> t;
+                        }
+                    }
+                }
+            }
         }
     }
 }

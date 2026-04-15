@@ -8,3 +8,5 @@ python-dotenv>=1.0
 twilio>=9.0
 python-multipart>=0.0.9
 jaclang
+qdrant-client[fastembed]>=1.9
+apscheduler>=3.10
