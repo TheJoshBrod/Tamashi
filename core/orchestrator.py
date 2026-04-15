@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import typing
 from core.config import settings
 from core.schemas import Message
@@ -90,6 +91,11 @@ class Orchestrator:
             # Record final full response in history
             assistant_msg = Message(role="assistant", content=full_text)
             self._store.append(session_id, assistant_msg)
+
+            # Fire-and-forget consolidation — runs for all interfaces, not just Twilio
+            if settings.long_term_memory_enabled:
+                from memory.consolidator import consolidate_if_needed
+                asyncio.create_task(consolidate_if_needed(session_id, self._store))
             return
 
         event_bus.emit({"event": "MAX_ITERATIONS_REACHED"})

@@ -126,7 +126,11 @@ class SQLiteSessionStore(SessionStore):
             )
 
     def get_max_message_id(self, session_id: str) -> int:
-        """Return the highest message id for this session (post-reset)."""
+        """Return the highest message id for this session (post-reset).
+
+        Counts only user/assistant turns so tool and system messages don't
+        skew the consolidation-window boundary.
+        """
         with self._conn() as con:
             reset_row = con.execute(
                 "SELECT MAX(id) as last_id FROM messages "
@@ -137,7 +141,7 @@ class SQLiteSessionStore(SessionStore):
             row = con.execute(
                 "SELECT MAX(id) as max_id FROM messages "
                 "WHERE session_id = ? AND id > ? "
-                "AND role IN ('system', 'user', 'assistant', 'tool')",
+                "AND role IN ('user', 'assistant')",
                 (session_id, after_id),
             ).fetchone()
         return row["max_id"] or 0
@@ -162,7 +166,7 @@ class SQLiteSessionStore(SessionStore):
             max_row = con.execute(
                 "SELECT MAX(id) as max_id FROM messages "
                 "WHERE session_id = ? AND id > ? "
-                "AND role IN ('system', 'user', 'assistant', 'tool')",
+                "AND role IN ('user', 'assistant')",
                 (session_id, after_id),
             ).fetchone()
             max_id = max_row["max_id"] or 0

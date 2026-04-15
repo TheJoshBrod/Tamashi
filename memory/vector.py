@@ -6,6 +6,7 @@ Shared key with the Jac graph: payload["node_id"] == str(jid(fact_node))
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 
 from core.config import settings
@@ -59,7 +60,7 @@ class QdrantMemoryStore:
         try:
             from qdrant_client.models import PointStruct
             client = self._get_client()
-            point_id = abs(hash(node_id)) % (2 ** 63)
+            point_id = int(hashlib.md5(node_id.encode()).hexdigest(), 16) % (2 ** 63)
             client.upsert(
                 collection_name=_COLLECTION,
                 points=[

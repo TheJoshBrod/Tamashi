@@ -40,10 +40,13 @@ async def consolidate_if_needed(session_id: str, store) -> None:
             extractor.extract_facts, raw, source_msg_id=max_id
         )
 
+        vector_ok = True
         if facts:
             jids = await asyncio.to_thread(bridge.ingest_facts, session_id, facts)
 
-            # Phase 3: mirror each new Fact to the Qdrant vector index
+            # Phase 3: mirror each new Fact to the Qdrant vector index.
+            # If this fails we do NOT mark the batch consolidated — the next
+            # turn will retry rather than silently drop the vectors.
             if jids:
                 try:
                     from memory.vector import vector_store
@@ -56,21 +59,28 @@ async def consolidate_if_needed(session_id: str, store) -> None:
                             fact["content"],
                         )
                 except Exception:
-                    log.warning("vector upsert failed during consolidation (non-fatal)")
+                    vector_ok = False
+                    log.warning(
+                        "vector upsert failed for %s — will retry on next turn",
+                        session_id,
+                    )
 
-            event_bus.emit({
-                "event": "MEMORY_CONSOLIDATED",
-                "session_id": session_id,
-                "fact_count": len(facts),
-                "jids": jids,
-            })
-            log.info("consolidated %d facts for %s", len(facts), session_id)
+            if vector_ok:
+                event_bus.emit({
+                    "event": "MEMORY_CONSOLIDATED",
+                    "session_id": session_id,
+                    "fact_count": len(facts),
+                    "jids": jids,
+                })
+                log.info("consolidated %d facts for %s", len(facts), session_id)
 
-        # Mark the batch as consolidated even if no facts were extracted, so we
-        # don't re-process the same messages on the next turn.
-        cutoff = max_id - settings.working_memory_size
-        if cutoff > 0:
-            store.mark_consolidated(session_id, cutoff)
+        # Only advance the consolidation mark when all writes (SQLite + Qdrant)
+        # succeeded. If Qdrant failed, leave the mark where it is so the next
+        # turn re-processes the same batch.
+        if vector_ok:
+            cutoff = max_id - settings.working_memory_size
+            if cutoff > 0:
+                store.mark_consolidated(session_id, cutoff)
 
     except Exception:
         event_bus.emit({"event": "MEMORY_FAILED", "session_id": session_id})

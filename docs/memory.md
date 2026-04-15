@@ -62,17 +62,22 @@ Jac library mode is **in-memory only** — graph state does not survive process 
 
 ## Consolidation Pipeline
 
-After every agent reply, a fire-and-forget `asyncio.Task` runs `consolidate_if_needed`:
+After every agent reply, a fire-and-forget `asyncio.Task` runs `consolidate_if_needed`. The trigger lives in `core/orchestrator.py` so it fires for every interface (REST, Twilio, Discord, etc.) — not just WhatsApp.
 
 ```
-agent reply sent
+agent reply sent  ← Orchestrator.handle_stream (all interfaces)
     └── asyncio.create_task(consolidate_if_needed(session_id, store))
             ├── store.get_unconsolidated(session_id, working_memory_size)
-            │       → messages outside the FIFO window not yet consolidated
+            │       → user/assistant messages outside the FIFO window,
+            │         not yet consolidated (tool/system rows excluded from
+            │         the window boundary so they don't skew the cutoff)
             ├── extractor.extract_facts(raw_messages)   # LiteLLM JSON mode
             ├── bridge.ingest_facts(session_id, facts)  # Jac + SQLite
             ├── vector_store.upsert(node_id, ...)       # Qdrant
             └── store.mark_consolidated(session_id, cutoff_id)
+                    ↑ only advanced if Qdrant upsert succeeded;
+                      on failure the batch is left unconsolidated
+                      and retried on the next turn
 ```
 
 `consolidated_marks(session_id, max_message_id)` in SQLite tracks the high-water mark so no messages are processed twice.

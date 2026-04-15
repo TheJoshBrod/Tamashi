@@ -109,11 +109,6 @@ async def _process(
     # 4. Signal final completion
     event_bus.emit({"event": "AGENT_REPLY_SENT", "user_text": user_text, "reply": full_reply.strip()})
 
-    # 5. Fire-and-forget: consolidate any messages that fell out of the FIFO window.
-    from app import store
-    from memory.consolidator import consolidate_if_needed
-    asyncio.create_task(consolidate_if_needed(session_id, store))
-
 
 @router.post("/webhook/twilio")
 async def twilio_webhook(
