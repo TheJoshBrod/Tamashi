@@ -243,12 +243,16 @@ def get_full_graph(user_id: str) -> dict:
     relations = subject_store.get_relations(user_id)
     
     # 3. Map relations to JIDs
-    name_to_jid = {n["name"]: n["jid"] for n in nodes if "name" in n and "jid" in n}
+    # Robustness: strip names to avoid whitespace mismatches
+    name_to_jid = {n["name"].strip(): n["jid"] for n in nodes if "name" in n and "jid" in n}
     
     mapped_edges = []
     for rel in relations:
-        src_jid = name_to_jid.get(rel["src_name"])
-        tgt_jid = name_to_jid.get(rel["tgt_name"])
+        src_name = rel["src_name"].strip()
+        tgt_name = rel["tgt_name"].strip()
+        src_jid = name_to_jid.get(src_name)
+        tgt_jid = name_to_jid.get(tgt_name)
+        
         if src_jid and tgt_jid:
             mapped_edges.append({
                 "from": src_jid,
@@ -257,6 +261,8 @@ def get_full_graph(user_id: str) -> dict:
                 "kind": rel["kind"],
                 "weight": rel.get("weight", 1.0)
             })
+        else:
+            log.debug(f"Skipping edge: {src_name} ({src_jid}) -> {tgt_name} ({tgt_jid})")
             
     return {
         "nodes": [{"id": n["jid"], "label": n["name"], "group": n["subject_type"], **n} for n in nodes],

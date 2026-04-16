@@ -1,3 +1,4 @@
+from pathlib import Path
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
@@ -118,7 +119,7 @@ async def add_relation(data: RelationCreate, user_id: str = "default_user"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.request("DELETE", "/api/memory/relations")
+@router.delete("/api/memory/relations")
 async def delete_relation(
     source: str, 
     kind: str, 

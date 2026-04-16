@@ -1,10 +1,40 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tamashi | Memory Graph</title>
-    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <!-- Relation Selection Modal -->
+    <div id="relation-modal" style="display: none;">
+        <div class="modal-content">
+            <h3>Establish Relationship</h3>
+            <div class="field">
+                <label>Relationship Type</label>
+                <select id="rel-kind-select" onchange="toggleCustomRel(this.value)">
+                    <option value="relates_to">Relates to</option>
+                    <option value="is_a">Is a (category/type)</option>
+                    <option value="works_at">Works at</option>
+                    <option value="lives_in">Lives in</option>
+                    <option value="member_of">Member of</option>
+                    <option value="loves">Loves / Likes</option>
+                    <option value="uses">Uses</option>
+                    <option value="owned_by">Owned by</option>
+                    <option value="other">Other (Custom...)</option>
+                </select>
+            </div>
+            <div id="custom-rel-container" class="field" style="display: none;">
+                <label>Custom Type</label>
+                <input type="text" id="rel-kind-custom" placeholder="e.g. rival_of">
+            </div>
+            <div class="modal-actions">
+                <button class="modal-btn secondary" onclick="closeRelationModal(false)">Cancel</button>
+                <button class="modal-btn primary" onclick="closeRelationModal(true)">Establish</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <style>
         :root {
             --bg-color: #0f172a;
@@ -16,7 +46,8 @@
             --success-color: #22c55e;
         }
 
-        body, html {
+        body,
+        html {
             margin: 0;
             padding: 0;
             width: 100%;
@@ -34,30 +65,165 @@
 
         #sidebar {
             position: absolute;
-            top: 20px;
-            right: 20px;
+            top: 1rem;
+            right: 1rem;
             width: 320px;
+            max-width: calc(100vw - 2rem);
             background: var(--panel-bg);
             border: 1px solid var(--border-color);
             border-radius: 12px;
             padding: 20px;
             box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
-            max-height: calc(100vh - 80px);
+            max-height: calc(100vh - 2rem - 60px);
             overflow-y: auto;
-            transition: transform 0.3s ease;
-            z-index: 100;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 1000;
         }
 
         .sidebar-hidden {
-            transform: translateX(360px);
+            transform: translateX(calc(100% + 2rem));
         }
 
-        h2 { margin-top: 0; font-size: 1.25rem; color: var(--accent-color); }
-        h3 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin: 20px 0 10px; }
+        .close-btn {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            background: none;
+            border: none;
+            color: #64748b;
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 5px;
+            line-height: 1;
+        }
 
-        .form-group { margin-bottom: 15px; }
-        label { display: block; font-size: 0.8rem; margin-bottom: 5px; color: #94a3b8; }
-        input, textarea, select {
+        .close-btn:hover {
+            color: var(--text-color);
+        }
+
+        /* Relation Modal */
+        #relation-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 2000;
+            backdrop-filter: blur(4px);
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 30px;
+            width: 400px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            animation: modalPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        @keyframes modalPop {
+            from {
+                transform: scale(0.9);
+                opacity: 0;
+            }
+
+            to {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .modal-content h3 {
+            margin-top: 0;
+            color: var(--text-color);
+        }
+
+        .modal-content .field {
+            margin-bottom: 20px;
+        }
+
+        .modal-content label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+            color: #a0aec0;
+        }
+
+        .modal-content select,
+        .modal-content input {
+            width: 100%;
+            padding: 12px;
+            background: #2d3748;
+            border: 1px solid #4a5568;
+            border-radius: 8px;
+            color: white;
+            font-size: 1rem;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+
+        .modal-btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .modal-btn.primary {
+            background: var(--accent-color);
+            color: white;
+        }
+
+        .modal-btn.secondary {
+            background: #4a5568;
+            color: white;
+        }
+
+        .modal-btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+
+        h2 {
+            margin-top: 0;
+            font-size: 1.25rem;
+            color: var(--accent-color);
+        }
+
+        h3 {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #94a3b8;
+            margin: 20px 0 10px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            font-size: 0.8rem;
+            margin-bottom: 5px;
+            color: #94a3b8;
+        }
+
+        input,
+        textarea,
+        select {
             width: 100%;
             padding: 10px;
             background: #0f172a;
@@ -67,9 +233,18 @@
             font-family: inherit;
             box-sizing: border-box;
         }
-        textarea { height: 100px; resize: none; }
 
-        .button-group { display: flex; gap: 10px; margin-top: 20px; }
+        textarea {
+            height: 100px;
+            resize: none;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
         button {
             flex: 1;
             padding: 10px;
@@ -79,10 +254,110 @@
             font-weight: 600;
             transition: opacity 0.2s;
         }
-        button:hover { opacity: 0.9; }
-        .btn-primary { background: var(--accent-color); color: #0f172a; }
-        .btn-danger { background: var(--danger-color); color: white; }
-        .btn-ghost { background: transparent; border: 1px solid var(--border-color); color: var(--text-color); }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        .btn-primary {
+            background: var(--accent-color);
+            color: #0f172a;
+        }
+
+        .btn-danger {
+            background: var(--danger-color);
+            color: white;
+        }
+
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+        }
+
+        /* FAB Button */
+        #fab-container {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            display: flex;
+            flex-direction: column-reverse;
+            align-items: center;
+            gap: 15px;
+            z-index: 1500;
+        }
+
+        .fab-main {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: var(--accent-color);
+            color: #0f172a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            cursor: pointer;
+            box-shadow: 0 10px 30px rgba(56, 189, 248, 0.4);
+            border: none;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .fab-main.active {
+            transform: rotate(45deg);
+            background: #475569;
+            color: white;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .fab-sub {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            opacity: 0;
+            transform: translateY(20px) scale(0.8);
+            visibility: hidden;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: relative;
+        }
+
+        #fab-container.active .fab-sub {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            visibility: visible;
+        }
+
+        .fab-label {
+            position: absolute;
+            right: 100%;
+            margin-right: 15px;
+            background: rgba(15, 23, 42, 0.9);
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            white-space: nowrap;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+            border: 1px solid var(--border-color);
+        }
+
+        .fab-sub:hover .fab-label {
+            opacity: 1;
+        }
+
+        .fab-sub:hover {
+            background: var(--bg-color);
+            border-color: var(--accent-color);
+        }
 
         #controls {
             position: absolute;
@@ -102,37 +377,194 @@
             pointer-events: none;
         }
 
+        /* Toast Notifications */
+        #toast-container {
+            position: absolute;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 1000;
+        }
+
+        .toast {
+            background: var(--panel-bg);
+            border-left: 4px solid var(--accent-color);
+            padding: 12px 24px;
+            border-radius: 4px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        /* Loading Spinner */
+        #loading-overlay {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(30, 41, 59, 0.8);
+            padding: 8px 16px;
+            border-radius: 20px;
+            display: none;
+            align-items: center;
+            gap: 10px;
+            z-index: 1000;
+            border: 1px solid var(--border-color);
+        }
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--accent-color);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Empty State */
+        #empty-state {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            display: none;
+            color: #64748b;
+        }
+
+        /* Custom Zoom Controls */
+        #zoom-controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+            z-index: 100;
+        }
+
+        .zoom-btn {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            color: var(--text-color);
+            font-size: 1.25rem;
+            cursor: pointer;
+            border: none;
+        }
+
+        .zoom-btn:hover {
+            background: var(--bg-color);
+        }
+
+        .zoom-divider {
+            width: 1px;
+            background: var(--border-color);
+        }
+
         /* Vis.js Customizations */
-        .vis-network:focus { outline: none; }
+        .vis-network:focus {
+            outline: none;
+        }
+
         .vis-manipulation {
             background: var(--panel-bg) !important;
             border-top: 1px solid var(--border-color) !important;
-            height: 40px !important;
+            height: 45px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
         }
+
         .vis-button {
+            background: transparent !important;
             color: var(--text-color) !important;
+            border-radius: 4px !important;
+            padding: 4px 8px !important;
+            margin: 0 5px !important;
+            height: auto !important;
         }
+
         .vis-button:hover {
-            background: var(--bg-color) !important;
+            background: var(--accent-color) !important;
+            color: var(--bg-color) !important;
+        }
+
+        .vis-edit-mode {
+            background: var(--accent-color) !important;
+            color: var(--bg-color) !important;
+        }
+
+        /* Hide redundant buttons */
+        .vis-button.vis-edit {
+            display: none !important;
         }
     </style>
 </head>
+
 <body>
-    <div class="shortcut-hint">Drag nodes to move • Select to edit • Use toolbar to add edges</div>
-    
+    <div class="shortcut-hint">Drag nodes to move • Select to edit • Toggle Edit Mode to add edges</div>
+
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <span style="font-size: 0.8rem;">Syncing memory...</span>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <div id="empty-state">
+        <div style="font-size: 3rem; margin-bottom: 20px;">🧠</div>
+        <div style="font-size: 1.2rem;">Your memory graph is empty</div>
+        <div style="margin-top: 10px;">Click <b>+ New Subject</b> to start mapping your thoughts.</div>
+    </div>
+
     <div id="graph-container"></div>
 
+    <div id="zoom-controls">
+        <button class="zoom-btn" onclick="network.moveTo({scale: network.getScale() * 1.2})">+</button>
+        <div class="zoom-divider"></div>
+        <button class="zoom-btn" onclick="network.moveTo({scale: network.getScale() / 1.2})">−</button>
+        <div class="zoom-divider"></div>
+        <button class="zoom-btn" onclick="network.fit()">⛶</button>
+    </div>
+
     <div id="sidebar" class="sidebar-hidden">
+        <button class="close-btn" onclick="closeSidebar()">&times;</button>
         <h2 id="detail-title">Subject Details</h2>
-        
+
         <div id="edit-form">
             <input type="hidden" id="edit-jid">
-            
+
             <div class="form-group">
                 <label for="edit-name">Name</label>
-                <input type="text" id="edit-name">
+                <input type="text" id="edit-name" placeholder="e.g. Satoshi Nakamoto">
             </div>
-            
+
             <div class="form-group">
                 <label for="edit-type">Type</label>
                 <select id="edit-type">
@@ -145,34 +577,46 @@
                     <option value="other">Other</option>
                 </select>
             </div>
-            
+
             <div class="form-group">
                 <label for="edit-summary">Summary (One-liner)</label>
-                <input type="text" id="edit-summary">
+                <input type="text" id="edit-summary" placeholder="Brief gist of this subject">
             </div>
-            
+
             <div class="form-group">
-                <label for="edit-description">Description (Full log)</label>
-                <textarea id="edit-description"></textarea>
+                <label for="edit-description">Description (Full context)</label>
+                <textarea id="edit-description" placeholder="Everything the agent knows about this..."></textarea>
             </div>
-            
+
             <div class="button-group">
-                <button class="btn-primary" onclick="saveSubject()">Save Changes</button>
+                <button id="save-btn" class="btn-primary" onclick="saveSubject()">Save Changes</button>
                 <button class="btn-ghost" onclick="closeSidebar()">Cancel</button>
             </div>
-            
+
             <div class="button-group" style="margin-top: 10px;">
-                <button class="btn-danger" onclick="deleteSubject()">Delete Subject</button>
+                <button id="delete-btn" class="btn-danger" onclick="deleteSubject()">Delete Subject</button>
             </div>
         </div>
     </div>
 
+    <div id="fab-container">
+        <div class="fab-sub" onclick="startAddEdgeFlow()">
+            <span class="fab-label">New Relation</span>
+            <span style="font-size: 1.2rem;">🔗</span>
+        </div>
+        <div class="fab-sub" onclick="createNewSubject()">
+            <span class="fab-label">New Subject</span>
+            <span style="font-size: 1.2rem;">🧠</span>
+        </div>
+        <button class="fab-main" id="fab-main-btn" onclick="toggleFab()">+</button>
+    </div>
+
     <div id="controls">
-        <button class="btn-primary" onclick="createNewSubject()">+ New Subject</button>
         <button class="btn-ghost" onclick="refreshGraph()">Refresh</button>
         <button class="btn-ghost" onclick="window.location.href='/display/'">Back to Dashboard</button>
     </div>
 
     <script src="/display/static/memory.js"></script>
 </body>
+
 </html>
