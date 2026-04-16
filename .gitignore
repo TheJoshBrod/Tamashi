@@ -374,7 +374,7 @@ compile_commands.json
 
 # Compiled Jac Lang files
 *.jir
-.jac/*
+.jac/
 
 # Java bytecode (already covered by *.class)
 
