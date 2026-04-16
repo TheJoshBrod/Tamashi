@@ -120,6 +120,12 @@ All settings live in `core/config.py` (overridable via `.env`):
 
 ---
 
+## Memory Graph UI
+
+A visual editor for browsing and editing the graph is available at `localhost:8000/display/memory`. See [Display & Dashboard](display.md) for full usage documentation.
+
+---
+
 ## Phase Decision Log
 
 ### Phase 1 & 2 (Complete)

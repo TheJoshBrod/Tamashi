@@ -14,6 +14,9 @@ Instructions on how to connect Tamashi to the outside world. This includes detai
 ### [Extending Tamashi](extending_tamashi.md)
 A practical guide for adding new capabilities. Learn how to register global tools, create specialized subagents, and build custom emotional UI states for new features.
 
+### [Display & Dashboard](display.md)
+The web dashboard at `/display/`. Covers the emotion avatar UI and the memory graph editor — how to navigate, create/edit subjects and relations, and the REST API backing the graph view.
+
 ### [Memory Architecture](memory.md)
 How the hybrid dual-store memory system works: FIFO working buffer, Jac graph long-term store, Qdrant vector index, GraphRAG retrieval, and the nightly edge-linking pipeline.
 
