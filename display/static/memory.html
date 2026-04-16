@@ -1121,17 +1121,7 @@
 
         <div class="form-field">
           <label class="form-label">Relationship Type</label>
-          <select class="form-select" id="new-rel-kind" onchange="toggleNewRelCustomKind(this.value)">
-            <option value="relates_to">Relates to</option>
-            <option value="is_a">Is a (category / type)</option>
-            <option value="works_at">Works at</option>
-            <option value="lives_in">Lives in</option>
-            <option value="member_of">Member of</option>
-            <option value="loves">Loves / Likes</option>
-            <option value="uses">Uses</option>
-            <option value="owned_by">Owned by</option>
-            <option value="other">Other (Custom)</option>
-          </select>
+          <select class="form-select" id="new-rel-kind" onchange="toggleCustomKind('new-rel-custom-container', this.value)"></select>
         </div>
 
         <div id="new-rel-custom-container" class="form-field" style="display:none">
@@ -1156,17 +1146,7 @@
 
         <div class="form-field">
           <label class="form-label">Relationship Type</label>
-          <select class="form-select" id="edge-kind" onchange="toggleEdgeCustomKind(this.value)">
-            <option value="relates_to">Relates to</option>
-            <option value="is_a">Is a (category / type)</option>
-            <option value="works_at">Works at</option>
-            <option value="lives_in">Lives in</option>
-            <option value="member_of">Member of</option>
-            <option value="loves">Loves / Likes</option>
-            <option value="uses">Uses</option>
-            <option value="owned_by">Owned by</option>
-            <option value="other">Other (Custom)</option>
-          </select>
+          <select class="form-select" id="edge-kind" onchange="toggleCustomKind('edge-custom-container', this.value)"></select>
         </div>
 
         <div id="edge-custom-container" class="form-field" style="display:none">
@@ -1207,17 +1187,7 @@
       <div class="modal-body">
         <div class="form-field">
           <label class="form-label">Relationship Type</label>
-          <select class="form-select" id="rel-kind-select" onchange="toggleCustomRel(this.value)">
-            <option value="relates_to">Relates to</option>
-            <option value="is_a">Is a (category / type)</option>
-            <option value="works_at">Works at</option>
-            <option value="lives_in">Lives in</option>
-            <option value="member_of">Member of</option>
-            <option value="loves">Loves / Likes</option>
-            <option value="uses">Uses</option>
-            <option value="owned_by">Owned by</option>
-            <option value="other">Other (Custom)</option>
-          </select>
+          <select class="form-select" id="rel-kind-select" onchange="toggleCustomKind('custom-rel-container', this.value)"></select>
         </div>
         <div id="custom-rel-container" class="form-field" style="display:none">
           <label class="form-label">Custom Type</label>

@@ -7,10 +7,13 @@ let nodes = new vis.DataSet([]);
 let edges = new vis.DataSet([]);
 let selectedNodeJid = null;
 let selectedEdgeId = null;
-let currentSidebarMode = 'node'; // 'node' | 'edge'
+let currentSidebarMode = 'node'; // 'node' | 'edge' | 'new-edge'
 let pendingEdgeData = null;
 let pendingEdgeCallback = null;
 let physicsEnabled = true;
+let _stabilizeTimeout = null;
+let hiddenTypes = new Set();
+let hiddenKinds = new Set();
 
 /* ── Type styling ─────────────────────────────────────────── */
 const TYPE_META = {
@@ -23,8 +26,44 @@ const TYPE_META = {
   other: { border: '#7090a4', bg: '#0c0e14', shadow: 'rgba(112,144,164,0.45)' },
 };
 
+const REL_KIND_OPTIONS = [
+  ['relates_to', 'Relates to'],
+  ['is_a', 'Is a (category / type)'],
+  ['works_at', 'Works at'],
+  ['lives_in', 'Lives in'],
+  ['member_of', 'Member of'],
+  ['loves', 'Loves / Likes'],
+  ['uses', 'Uses'],
+  ['owned_by', 'Owned by'],
+  ['other', 'Other (Custom)'],
+];
+
+/* ── Shared helpers ───────────────────────────────────────── */
+function nodeColorFromType(type) {
+  const meta = TYPE_META[type] || TYPE_META.other;
+  return {
+    background: meta.bg,
+    border: meta.border,
+    highlight: { background: meta.bg, border: '#c9a84c' },
+    hover: { background: meta.bg, border: meta.border },
+  };
+}
+
+function nodeName(node) {
+  return node?.subject?.name || node?.label || '';
+}
+
+function toggleCustomKind(containerId, value) {
+  document.getElementById(containerId).style.display = value === 'other' ? 'block' : 'none';
+}
+
 /* ── Bootstrap ────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
+  const relKindHtml = REL_KIND_OPTIONS.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+  ['rel-kind-select', 'new-rel-kind', 'edge-kind'].forEach(id => {
+    document.getElementById(id).innerHTML = relKindHtml;
+  });
+
   initBackground();
   initGraph();
   refreshGraph();
@@ -46,6 +85,7 @@ function initBackground() {
   const canvas = document.getElementById('bg-canvas');
   const ctx = canvas.getContext('2d');
   const CONNECT_DIST = 110;
+  const CONNECT_DIST_SQ = CONNECT_DIST * CONNECT_DIST;
   const COUNT = 70;
 
   function resize() {
@@ -67,14 +107,13 @@ function initBackground() {
   function frame() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    /* connections */
     for (let i = 0; i < COUNT; i++) {
       for (let j = i + 1; j < COUNT; j++) {
         const dx = particles[i].x - particles[j].x;
         const dy = particles[i].y - particles[j].y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < CONNECT_DIST) {
-          const a = (1 - dist / CONNECT_DIST) * 0.07;
+        const distSq = dx * dx + dy * dy;
+        if (distSq < CONNECT_DIST_SQ) {
+          const a = (1 - Math.sqrt(distSq) / CONNECT_DIST) * 0.07;
           ctx.beginPath();
           ctx.moveTo(particles[i].x, particles[i].y);
           ctx.lineTo(particles[j].x, particles[j].y);
@@ -85,14 +124,12 @@ function initBackground() {
       }
     }
 
-    /* points */
     particles.forEach(p => {
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(201,168,76,${p.o})`;
       ctx.fill();
 
-      /* drift & wrap */
       p.x += p.vx;
       p.y += p.vy;
       if (p.x < 0) p.x = canvas.width;
@@ -209,7 +246,7 @@ function initGraph() {
 
   network.on('stabilized', () => {
     setLoading(false);
-    if (window._stabilizeTimeout) clearTimeout(window._stabilizeTimeout);
+    if (_stabilizeTimeout) clearTimeout(_stabilizeTimeout);
   });
 }
 
@@ -224,17 +261,11 @@ async function refreshGraph({ focusName } = {}) {
 
     const formattedNodes = data.nodes.map(subject => {
       const type = subject.subject_type?.toLowerCase() || 'other';
-      const meta = TYPE_META[type] || TYPE_META.other;
       return {
         id: subject.jid,
         label: subject.name,
         title: buildTooltip(subject),
-        color: {
-          background: meta.bg,
-          border: meta.border,
-          highlight: { background: meta.bg, border: '#c9a84c' },
-          hover: { background: meta.bg, border: meta.border },
-        },
+        color: nodeColorFromType(type),
         // shadow disabled globally for performance
         subject,
       };
@@ -243,7 +274,6 @@ async function refreshGraph({ focusName } = {}) {
     nodes.clear();
     edges.clear();
 
-    /* Update stats */
     const sEl = document.getElementById('stat-subjects');
     const rEl = document.getElementById('stat-relations');
     sEl.textContent = formattedNodes.length;
@@ -251,7 +281,7 @@ async function refreshGraph({ focusName } = {}) {
     sEl.classList.toggle('loaded', formattedNodes.length > 0);
     rEl.classList.toggle('loaded', data.edges.length > 0);
 
-    /* Keep datalist in sync for the new-relation sidebar */
+    // subjects-list has no separate refresh path — must be kept in sync during data load
     const datalist = document.getElementById('subjects-list');
     datalist.innerHTML = '';
     formattedNodes.forEach(n => {
@@ -261,7 +291,7 @@ async function refreshGraph({ focusName } = {}) {
     });
 
     if (formattedNodes.length > 0) {
-      /* Switch solver based on graph size */
+      // barnesHut scales better past 500 nodes; forceAtlas2Based gives better aesthetics below that
       if (formattedNodes.length > 500) {
         network.setOptions({ physics: { solver: 'barnesHut' } });
       } else {
@@ -294,10 +324,9 @@ async function refreshGraph({ focusName } = {}) {
         network.moveTo({ scale: 0.15 });
       }
 
-
       /* Backup timeout in case stabilization takes forever or physics is paused */
-      if (window._stabilizeTimeout) clearTimeout(window._stabilizeTimeout);
-      window._stabilizeTimeout = setTimeout(() => setLoading(false), 2500);
+      if (_stabilizeTimeout) clearTimeout(_stabilizeTimeout);
+      _stabilizeTimeout = setTimeout(() => setLoading(false), 2500);
 
     } else {
       document.getElementById('empty-state').style.display = 'block';
@@ -345,19 +374,12 @@ async function saveSubject() {
         refreshGraph({ focusName: payload.name });
       } else {
         /* Existing node: patch the DataSet in-place, no graph redraw */
-        const type = payload.subject_type;
-        const meta = TYPE_META[type] || TYPE_META.other;
         const updatedSubject = { ...payload, jid };
         nodes.update({
           id: jid,
           label: payload.name,
           title: buildTooltip(updatedSubject),
-          color: {
-            background: meta.bg,
-            border: meta.border,
-            highlight: { background: meta.bg, border: '#c9a84c' },
-            hover: { background: meta.bg, border: meta.border },
-          },
+          color: nodeColorFromType(payload.subject_type),
           // shadow disabled globally for performance
           subject: updatedSubject,
         });
@@ -406,9 +428,9 @@ async function saveRelation(edgeData, kind, callback) {
   }
 
   const payload = {
-    source: srcNode.subject?.name || srcNode.label,
+    source: nodeName(srcNode),
     kind,
-    target: tgtNode.subject?.name || tgtNode.label,
+    target: nodeName(tgtNode),
   };
 
   setLoading(true);
@@ -442,7 +464,7 @@ async function apiDeleteRelation(edge, callback) {
 
   setLoading(true);
   try {
-    const url = `/display/api/memory/relations?source=${encodeURIComponent(srcNode?.subject?.name || srcNode?.label || '')}&kind=${encodeURIComponent(kind)}&target=${encodeURIComponent(tgtNode?.subject?.name || tgtNode?.label || '')}`;
+    const url = `/display/api/memory/relations?source=${encodeURIComponent(nodeName(srcNode))}&kind=${encodeURIComponent(kind)}&target=${encodeURIComponent(nodeName(tgtNode))}`;
     const res = await fetch(url, { method: 'DELETE' });
     if (res.ok) {
       showToast('Relation removed');
@@ -539,8 +561,8 @@ function showEdgeDetails(edgeId) {
 
   const srcNode = nodes.get(edge.from);
   const tgtNode = nodes.get(edge.to);
-  const srcName = srcNode?.subject?.name || srcNode?.label || '?';
-  const tgtName = tgtNode?.subject?.name || tgtNode?.label || '?';
+  const srcName = nodeName(srcNode) || '?';
+  const tgtName = nodeName(tgtNode) || '?';
   const kind = edge.kind || edge.label || '';
 
   selectedEdgeId = edgeId;
@@ -551,7 +573,7 @@ function showEdgeDetails(edgeId) {
   document.getElementById('edge-from-name').textContent = srcName;
   document.getElementById('edge-to-name').textContent = tgtName;
 
-  /* Pre-select the dropdown; fall back to 'other' for custom kinds */
+  // custom kinds not in the option list fall back to 'other' + free-text
   const select = document.getElementById('edge-kind');
   const knownOpts = Array.from(select.options).map(o => o.value);
   if (knownOpts.includes(kind)) {
@@ -569,16 +591,10 @@ function showEdgeDetails(edgeId) {
   document.getElementById('delete-btn').textContent = 'Delete Relation';
   document.getElementById('delete-btn').style.display = '';
 
-  /* Swap visible panels */
   document.getElementById('node-fields').style.display = 'none';
   document.getElementById('edge-fields').style.display = '';
 
   document.getElementById('sidebar').classList.add('open');
-}
-
-function toggleEdgeCustomKind(value) {
-  document.getElementById('edge-custom-container').style.display =
-    value === 'other' ? 'block' : 'none';
 }
 
 async function saveEdge() {
@@ -597,11 +613,9 @@ async function saveEdge() {
 
   setLoading(true);
 
-  /* Delete old relation then create the new one */
-  const srcNode = nodes.get(edge.from);
-  const tgtNode = nodes.get(edge.to);
-  const source = srcNode?.subject?.name || srcNode?.label || '';
-  const target = tgtNode?.subject?.name || tgtNode?.label || '';
+  // API lacks an update endpoint — delete then recreate
+  const source = nodeName(nodes.get(edge.from));
+  const target = nodeName(nodes.get(edge.to));
 
   try {
     const delUrl = `/display/api/memory/relations?source=${encodeURIComponent(source)}&kind=${encodeURIComponent(oldKind)}&target=${encodeURIComponent(target)}`;
@@ -634,7 +648,6 @@ function deleteEdgeFromSidebar() {
 
   if (confirm('Delete this relationship?')) {
     apiDeleteRelation(edge, () => {
-      edges.remove(edgeId);
       closeSidebar();
       refreshGraph();
     });
@@ -644,7 +657,6 @@ function deleteEdgeFromSidebar() {
 function deleteSubject() {
   if (selectedNodeJid && confirm('Permanently remove this subject from memory?')) {
     apiDeleteSubject(selectedNodeJid, () => {
-      nodes.remove(selectedNodeJid);
       closeSidebar();
       refreshGraph();
     });
@@ -732,11 +744,6 @@ async function saveNewRelation() {
   }
 }
 
-function toggleNewRelCustomKind(value) {
-  document.getElementById('new-rel-custom-container').style.display =
-    value === 'other' ? 'block' : 'none';
-}
-
 /* ═══════════════════════════════════════════════════════════
    RELATION MODAL
    ═══════════════════════════════════════════════════════════ */
@@ -749,11 +756,6 @@ function showRelationModal(edgeData, callback) {
   document.getElementById('custom-rel-container').style.display = 'none';
 
   document.getElementById('relation-modal').style.display = 'flex';
-}
-
-function toggleCustomRel(value) {
-  document.getElementById('custom-rel-container').style.display =
-    value === 'other' ? 'block' : 'none';
 }
 
 function closeRelationModal(success) {
@@ -783,26 +785,12 @@ function closeRelationModal(success) {
 /* ═══════════════════════════════════════════════════════════
    FILTER PANEL
    ═══════════════════════════════════════════════════════════ */
-let hiddenTypes = new Set();
-let hiddenKinds = new Set();
-
-const TYPE_COLORS = {
-  person: '#e87c8a',
-  concept: '#7cb4e8',
-  goal: '#7ce8a8',
-  event: '#e8c87c',
-  place: '#b47ce8',
-  object: '#e87cb4',
-  other: '#7090a4',
-};
-
 function toggleFilterPanel() {
   const panel = document.getElementById('filter-panel');
   panel.classList.toggle('open');
 }
 
 function populateFilterPanel() {
-  /* ── Subject types ── */
   const typeCounts = {};
   nodes.get().forEach(n => {
     const t = n.subject?.subject_type?.toLowerCase() || 'other';
@@ -811,7 +799,7 @@ function populateFilterPanel() {
 
   const typesEl = document.getElementById('filter-types');
   typesEl.innerHTML = '';
-  Object.entries(TYPE_COLORS).forEach(([type, color]) => {
+  Object.entries(TYPE_META).forEach(([type, meta]) => {
     const count = typeCounts[type] || 0;
     const isOff = hiddenTypes.has(type);
     const item = document.createElement('div');
@@ -819,14 +807,13 @@ function populateFilterPanel() {
     item.dataset.type = type;
     item.innerHTML = `
       <div class="fi-check">✓</div>
-      <div class="fi-dot" style="background:${color};box-shadow:0 0 4px ${color}"></div>
+      <div class="fi-dot" style="background:${meta.border};box-shadow:0 0 4px ${meta.border}"></div>
       <span class="fi-label">${type}</span>
       <span class="fi-count">${count}</span>`;
     item.addEventListener('click', () => toggleTypeFilter(type));
     typesEl.appendChild(item);
   });
 
-  /* ── Relation kinds ── */
   const kindCounts = {};
   edges.get().forEach(e => {
     const k = (e.kind || e.label || 'unknown').toLowerCase();
@@ -872,22 +859,29 @@ function toggleKindFilter(kind) {
 
 function applyFilter() {
   const re = getSearchRegex();
+  const allNodes = nodes.get();
+  const nodeUpdates = [];
+  const hiddenMap = new Map();
+  let matchCount = 0;
 
-  /* Nodes: hide if type-filtered OR doesn't match search */
-  nodes.update(nodes.get().map(n => {
+  for (const n of allNodes) {
     const type = n.subject?.subject_type?.toLowerCase() || 'other';
-    const typeHidden = hiddenTypes.has(type);
-    const srchHidden = re ? !matchesSearch(n.subject, re) : false;
-    return { id: n.id, hidden: typeHidden || srchHidden };
-  }));
+    const hidden = hiddenTypes.has(type) || (re ? !matchesSearch(n.subject, re) : false);
+    hiddenMap.set(n.id, hidden);
+    if (n.hidden !== hidden) nodeUpdates.push({ id: n.id, hidden });
+    if (!hidden) matchCount++;
+  }
+  if (nodeUpdates.length) nodes.update(nodeUpdates);
 
-  /* Edges: hide if connected node is hidden OR relation kind is hidden */
-  edges.update(edges.get().map(e => ({
-    id: e.id,
-    hidden: nodes.get(e.from)?.hidden
-      || nodes.get(e.to)?.hidden
-      || hiddenKinds.has((e.kind || e.label || '').toLowerCase()),
-  })));
+  const edgeUpdates = [];
+  for (const e of edges.get()) {
+    const hidden = !!hiddenMap.get(e.from) || !!hiddenMap.get(e.to)
+      || hiddenKinds.has((e.kind || e.label || '').toLowerCase());
+    if (e.hidden !== hidden) edgeUpdates.push({ id: e.id, hidden });
+  }
+  if (edgeUpdates.length) edges.update(edgeUpdates);
+
+  return { matched: matchCount, total: allNodes.length };
 }
 
 /* ── Search helpers ───────────────────────────────────────── */
@@ -921,7 +915,6 @@ function onSearchInput() {
     return;
   }
 
-  /* Validate regex first */
   try {
     new RegExp(val, 'i');
     wrap.classList.remove('invalid');
@@ -932,17 +925,14 @@ function onSearchInput() {
     return;
   }
 
-  applyFilter();
+  const { matched, total } = applyFilter();
   updateFilterBtn();
 
-  /* Show match count after filter is applied */
-  const all = nodes.get();
-  const matched = all.filter(n => !n.hidden).length;
   if (matched === 0) {
     statusEl.textContent = 'no matches';
     statusEl.className = 'search-status no-match';
   } else {
-    statusEl.textContent = `${matched} of ${all.length}`;
+    statusEl.textContent = `${matched} of ${total}`;
     statusEl.className = 'search-status has-match';
   }
 }
@@ -966,9 +956,8 @@ function clearSearch() {
 function clearFilters() {
   hiddenTypes.clear();
   hiddenKinds.clear();
-  clearSearch();        // also resets search input + re-applies
+  clearSearch(); // resets search input, calls applyFilter() + updateFilterBtn()
   populateFilterPanel();
-  updateFilterBtn();
 }
 
 function updateFilterBtn() {
