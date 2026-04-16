@@ -268,6 +268,9 @@ async function refreshGraph({ focusName } = {}) {
       edges.add(data.edges);
       document.getElementById('empty-state').style.display = 'none';
 
+      populateFilterPanel();
+      applyFilter();
+
       if (focusName) {
         const target = formattedNodes.find(n => n.label === focusName);
         if (target) {
@@ -761,6 +764,203 @@ function closeRelationModal(success) {
 
   pendingEdgeData     = null;
   pendingEdgeCallback = null;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FILTER PANEL
+   ═══════════════════════════════════════════════════════════ */
+let hiddenTypes = new Set();
+let hiddenKinds = new Set();
+
+const TYPE_COLORS = {
+  person:  '#e87c8a',
+  concept: '#7cb4e8',
+  goal:    '#7ce8a8',
+  event:   '#e8c87c',
+  place:   '#b47ce8',
+  object:  '#e87cb4',
+  other:   '#7090a4',
+};
+
+function toggleFilterPanel() {
+  const panel = document.getElementById('filter-panel');
+  panel.classList.toggle('open');
+}
+
+function populateFilterPanel() {
+  /* ── Subject types ── */
+  const typeCounts = {};
+  nodes.get().forEach(n => {
+    const t = n.subject?.subject_type?.toLowerCase() || 'other';
+    typeCounts[t] = (typeCounts[t] || 0) + 1;
+  });
+
+  const typesEl = document.getElementById('filter-types');
+  typesEl.innerHTML = '';
+  Object.entries(TYPE_COLORS).forEach(([type, color]) => {
+    const count = typeCounts[type] || 0;
+    const isOff = hiddenTypes.has(type);
+    const item  = document.createElement('div');
+    item.className = `fi${isOff ? ' off' : ''}`;
+    item.dataset.type = type;
+    item.innerHTML = `
+      <div class="fi-check">✓</div>
+      <div class="fi-dot" style="background:${color};box-shadow:0 0 4px ${color}"></div>
+      <span class="fi-label">${type}</span>
+      <span class="fi-count">${count}</span>`;
+    item.addEventListener('click', () => toggleTypeFilter(type));
+    typesEl.appendChild(item);
+  });
+
+  /* ── Relation kinds ── */
+  const kindCounts = {};
+  edges.get().forEach(e => {
+    const k = (e.kind || e.label || 'unknown').toLowerCase();
+    kindCounts[k] = (kindCounts[k] || 0) + 1;
+  });
+
+  const kindsEl      = document.getElementById('filter-kinds');
+  const kindsSection = document.getElementById('filter-kinds-section');
+  kindsEl.innerHTML  = '';
+
+  const kindEntries = Object.entries(kindCounts);
+  kindsSection.style.display = kindEntries.length > 0 ? '' : 'none';
+
+  kindEntries.sort((a, b) => b[1] - a[1]).forEach(([kind, count]) => {
+    const isOff = hiddenKinds.has(kind);
+    const item  = document.createElement('div');
+    item.className = `fi${isOff ? ' off' : ''}`;
+    item.dataset.kind = kind;
+    item.innerHTML = `
+      <div class="fi-check">✓</div>
+      <span class="fi-label">${kind.replace(/_/g, ' ')}</span>
+      <span class="fi-count">${count}</span>`;
+    item.addEventListener('click', () => toggleKindFilter(kind));
+    kindsEl.appendChild(item);
+  });
+}
+
+function toggleTypeFilter(type) {
+  if (hiddenTypes.has(type)) hiddenTypes.delete(type);
+  else hiddenTypes.add(type);
+  applyFilter();
+  populateFilterPanel();
+  updateFilterBtn();
+}
+
+function toggleKindFilter(kind) {
+  if (hiddenKinds.has(kind)) hiddenKinds.delete(kind);
+  else hiddenKinds.add(kind);
+  applyFilter();
+  populateFilterPanel();
+  updateFilterBtn();
+}
+
+function applyFilter() {
+  const re = getSearchRegex();
+
+  /* Nodes: hide if type-filtered OR doesn't match search */
+  nodes.update(nodes.get().map(n => {
+    const type       = n.subject?.subject_type?.toLowerCase() || 'other';
+    const typeHidden = hiddenTypes.has(type);
+    const srchHidden = re ? !matchesSearch(n.subject, re) : false;
+    return { id: n.id, hidden: typeHidden || srchHidden };
+  }));
+
+  /* Edges: hide if connected node is hidden OR relation kind is hidden */
+  edges.update(edges.get().map(e => ({
+    id:     e.id,
+    hidden: nodes.get(e.from)?.hidden
+         || nodes.get(e.to)?.hidden
+         || hiddenKinds.has((e.kind || e.label || '').toLowerCase()),
+  })));
+}
+
+/* ── Search helpers ───────────────────────────────────────── */
+function getSearchRegex() {
+  const val = document.getElementById('search-input')?.value?.trim();
+  if (!val) return null;
+  try { return new RegExp(val, 'i'); }
+  catch { return null; }
+}
+
+function matchesSearch(subject, re) {
+  return re.test(subject?.name        || '')
+      || re.test(subject?.summary     || '')
+      || re.test(subject?.description || '');
+}
+
+function onSearchInput() {
+  const val      = document.getElementById('search-input').value;
+  const clearBtn = document.getElementById('search-clear');
+  const statusEl = document.getElementById('search-status');
+  const wrap     = document.getElementById('search-wrap');
+
+  clearBtn.style.display = val.trim() ? '' : 'none';
+
+  if (!val.trim()) {
+    wrap.classList.remove('invalid');
+    statusEl.textContent = '';
+    statusEl.className   = 'search-status';
+    applyFilter();
+    updateFilterBtn();
+    return;
+  }
+
+  /* Validate regex first */
+  try {
+    new RegExp(val, 'i');
+    wrap.classList.remove('invalid');
+  } catch {
+    wrap.classList.add('invalid');
+    statusEl.textContent = 'invalid regex';
+    statusEl.className   = 'search-status error';
+    return;
+  }
+
+  applyFilter();
+  updateFilterBtn();
+
+  /* Show match count after filter is applied */
+  const all     = nodes.get();
+  const matched = all.filter(n => !n.hidden).length;
+  if (matched === 0) {
+    statusEl.textContent = 'no matches';
+    statusEl.className   = 'search-status no-match';
+  } else {
+    statusEl.textContent = `${matched} of ${all.length}`;
+    statusEl.className   = 'search-status has-match';
+  }
+}
+
+function clearSearch() {
+  const input    = document.getElementById('search-input');
+  const clearBtn = document.getElementById('search-clear');
+  const statusEl = document.getElementById('search-status');
+  const wrap     = document.getElementById('search-wrap');
+
+  input.value          = '';
+  clearBtn.style.display = 'none';
+  statusEl.textContent   = '';
+  statusEl.className     = 'search-status';
+  wrap.classList.remove('invalid');
+
+  applyFilter();
+  updateFilterBtn();
+}
+
+function clearFilters() {
+  hiddenTypes.clear();
+  hiddenKinds.clear();
+  clearSearch();        // also resets search input + re-applies
+  populateFilterPanel();
+  updateFilterBtn();
+}
+
+function updateFilterBtn() {
+  const searchActive = !!document.getElementById('search-input')?.value?.trim();
+  const active = hiddenTypes.size > 0 || hiddenKinds.size > 0 || searchActive;
+  document.getElementById('filter-btn').classList.toggle('filter-active', active);
 }
 
 /* ═══════════════════════════════════════════════════════════

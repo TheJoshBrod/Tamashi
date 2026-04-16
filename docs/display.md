@@ -15,25 +15,44 @@ Tamashi ships a built-in web dashboard served under `/display/`. It has two view
 
 ## Memory Graph UI
 
-`localhost:8000/display/memory`
+A full-screen, immersive visualization of the user's long-term memory graph. Features specialized controls for managing complex knowledge structures.
 
-A full-screen, interactive visualization of the user's long-term memory graph. Built on [vis.js Network](https://visjs.github.io/vis-network/docs/network/).
+### Top Bar & Stats
 
-### Node Types
+The top bar displays real-time health metrics of the memory system:
+- **Subjects**: Total entity nodes in the graph.
+- **Relations**: Total semantic edges connecting them.
+- **Physics Control (▶/⏸)**: Toggle graph simulation. Pausing is recommended when editing large graphs.
+- **Refresh**: Force-synchronize the UI with the backend (useful after manual Jac edits).
 
-Each Subject type is rendered with a distinct glow color:
+### Navigation & Perspective
 
-| Type | Color |
-|------|-------|
-| Person | Rose |
-| Concept | Cerulean |
-| Goal | Jade |
-| Event | Amber |
-| Place | Violet |
-| Object | Coral |
-| Other | Steel |
+- **Zoom (Bottom-left)**: Use the `+` / `-` buttons or your mouse wheel.
+- **Pan**: Click and drag the canvas background.
+- **Focus**: Click a node to center and zoom in on it while opening details.
+- **Aesthetics**: An interactive particle background provides visual depth and feedback.
 
-### Interacting with Subjects
+### Knowledge Navigation (Filters)
+
+The **Filter Panel** (left side) allows you to declutter the graph by toggling visibility of specific data types:
+- **Subject Types**: Hide/show entire categories of entities.
+- **Relation Kinds**: Hide/show specific edge types (e.g., hide all "works_at" links).
+
+### Subject Categorization (Legend)
+
+The persistent **Legend** (bottom-left) visualizes the color-coding for Subject types:
+
+| Type | Color | Description |
+|------|-------|-------------|
+| **Person** | Rose | Social entities and individuals |
+| **Concept** | Cerulean | Abstract ideas and semantic clusters |
+| **Goal** | Jade | Desires, objectives, and intents |
+| **Event** | Amber | Temporal occurrences |
+| **Place** | Violet | Geographical or logical locations |
+| **Object** | Coral | Tangible artifacts |
+| **Other** | Steel | General or unclassified nodes |
+
+### Interacting with Knowledge
 
 **Click a node** to open the detail sidebar. From there you can:
 - Edit the subject's name, type, summary, and description
@@ -55,9 +74,11 @@ Press the **+** FAB (bottom-right) → **New Subject** to open a blank creation 
 
 Press the **+** FAB → **New Relation** to open the relation creation sidebar. Type the **From** and **To** subject names (autocomplete suggestions are drawn from existing subjects), select a relationship type, and click **Establish Relation**.
 
-Alternatively, relations can be drawn directly on the graph using vis.js's built-in drag mode (enabled via the manipulation toolbar).
+Alternatively, relations can be drawn directly on the graph:
+1. Enable the **Manipulation Toolbar** (if not already visible, though usually hidden in favor of FAB).
+2. Use the **Add Edge** tool and drag between nodes.
 
-> Press **Esc** at any time to cancel an in-progress action and close the sidebar.
+> Press **Esc** at any time to cancel an in-progress action, close sidebars, or collapse the FAB.
 
 ### API Endpoints
 
