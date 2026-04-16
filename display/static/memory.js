@@ -10,6 +10,7 @@ let selectedEdgeId     = null;
 let currentSidebarMode = 'node'; // 'node' | 'edge'
 let pendingEdgeData    = null;
 let pendingEdgeCallback = null;
+let physicsEnabled     = true;
 
 /* ── Type styling ─────────────────────────────────────────── */
 const TYPE_META = {
@@ -146,15 +147,22 @@ function initGraph() {
       smooth: { type: 'continuous', roundness: 0.15 },
     },
     physics: {
+      enabled: true,
+      solver: 'forceAtlas2Based',
       forceAtlas2Based: {
-        gravitationalConstant: -90,
-        centralGravity:        0.008,
-        springLength:          160,
-        springConstant:        0.07,
+        gravitationalConstant: -50,
+        centralGravity:        0.01,
+        springConstant:        0.08,
+        springLength:          100,
+        damping:               0.4,
+        avoidOverlap:          0,
       },
       maxVelocity: 45,
-      solver: 'forceAtlas2Based',
-      stabilization: { iterations: 150 },
+      stabilization: {
+        enabled:        true,
+        iterations:     200,
+        updateInterval: 50,
+      },
     },
     interaction: {
       hover: true,
@@ -204,7 +212,7 @@ function initGraph() {
 /* ═══════════════════════════════════════════════════════════
    DATA LAYER
    ═══════════════════════════════════════════════════════════ */
-async function refreshGraph() {
+async function refreshGraph({ focusName } = {}) {
   setLoading(true);
   try {
     const res  = await fetch('/display/api/memory/graph');
@@ -249,9 +257,31 @@ async function refreshGraph() {
     });
 
     if (formattedNodes.length > 0) {
+      /* Switch solver based on graph size */
+      if (formattedNodes.length > 500) {
+        network.setOptions({ physics: { solver: 'barnesHut' } });
+      } else {
+        network.setOptions({ physics: { solver: 'forceAtlas2Based' } });
+      }
+
       nodes.add(formattedNodes);
       edges.add(data.edges);
       document.getElementById('empty-state').style.display = 'none';
+
+      if (focusName) {
+        const target = formattedNodes.find(n => n.label === focusName);
+        if (target) {
+          const onStabilized = () => {
+            network.off('stabilized', onStabilized);
+            network.selectNodes([target.id]);
+            network.focus(target.id, {
+              scale: 1.4,
+              animation: { duration: 700, easingFunction: 'easeInOutQuad' },
+            });
+          };
+          network.on('stabilized', onStabilized);
+        }
+      }
     } else {
       document.getElementById('empty-state').style.display = 'block';
       setLoading(false);
@@ -293,7 +323,29 @@ async function saveSubject() {
     if (res.ok) {
       showToast(isNew ? 'Subject created' : 'Subject saved');
       closeSidebar();
-      refreshGraph();
+      if (isNew) {
+        /* New node: need the server-assigned JID, so a full refresh is required */
+        refreshGraph({ focusName: payload.name });
+      } else {
+        /* Existing node: patch the DataSet in-place, no graph redraw */
+        const type = payload.subject_type;
+        const meta = TYPE_META[type] || TYPE_META.other;
+        const updatedSubject = { ...payload, jid };
+        nodes.update({
+          id:     jid,
+          label:  payload.name,
+          title:  buildTooltip(updatedSubject),
+          color:  {
+            background: meta.bg,
+            border:     meta.border,
+            highlight:  { background: meta.bg, border: '#c9a84c' },
+            hover:      { background: meta.bg, border: meta.border },
+          },
+          shadow:  { color: meta.shadow },
+          subject: updatedSubject,
+        });
+        setLoading(false);
+      }
     } else {
       const err = await res.json();
       showToast('Error: ' + err.detail);
@@ -585,6 +637,14 @@ function deleteSubject() {
 /* ═══════════════════════════════════════════════════════════
    FAB
    ═══════════════════════════════════════════════════════════ */
+function togglePhysics() {
+  physicsEnabled = !physicsEnabled;
+  network.setOptions({ physics: { enabled: physicsEnabled } });
+  const btn = document.getElementById('physics-btn');
+  btn.textContent = physicsEnabled ? '⏸' : '▶';
+  btn.title       = physicsEnabled ? 'Pause physics' : 'Resume physics';
+}
+
 function toggleFab() {
   document.getElementById('fab').classList.toggle('open');
 }
