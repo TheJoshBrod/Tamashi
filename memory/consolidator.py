@@ -1,4 +1,4 @@
-"""Async consolidation: extract facts from messages that fell out of the FIFO
+"""Async consolidation: extract subjects from messages that fell out of the FIFO
 working window and ingest them into the long-term Jac graph + SQLite store +
 Qdrant vector index.
 
@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 async def consolidate_if_needed(session_id: str, store) -> None:
-    """Extract facts from unconsolidated messages and write to long-term memory.
+    """Extract subjects from unconsolidated messages and write to long-term memory.
 
     Args:
         session_id: the user's session / phone number
@@ -33,30 +33,51 @@ async def consolidate_if_needed(session_id: str, store) -> None:
         max_id = store.get_max_message_id(session_id)
         raw = [{"role": m.role, "content": m.content} for m in batch if m.content]
 
-        # Extraction is a blocking LiteLLM call — run in a thread so we don't
-        # block the event loop.
+        # Build vocabulary: vector-search existing subjects relevant to this batch.
+        conversation_text = " ".join(
+            m["content"] for m in raw if m.get("content") and m["role"] == "user"
+        )
+        vocabulary: list[dict] = []
+        if conversation_text:
+            from memory import bridge
+            vocabulary = await asyncio.to_thread(
+                bridge.lookup_vocabulary, session_id, conversation_text
+            )
+
+        # Extraction is a blocking LiteLLM call — run in a thread.
         from memory import extractor, bridge
-        facts = await asyncio.to_thread(
-            extractor.extract_facts, raw, source_msg_id=max_id
+        extracted = await asyncio.to_thread(
+            extractor.extract_subjects, raw, vocabulary
         )
 
-        vector_ok = True
-        if facts:
-            jids = await asyncio.to_thread(bridge.ingest_facts, session_id, facts)
+        subjects = extracted.get("subjects", [])
+        relations = extracted.get("relations", [])
 
-            # Phase 3: mirror each new Fact to the Qdrant vector index.
-            # If this fails we do NOT mark the batch consolidated — the next
-            # turn will retry rather than silently drop the vectors.
-            if jids:
+        vector_ok = True
+        if subjects or relations:
+            ingest_result = await asyncio.to_thread(
+                bridge.ingest_subjects, session_id, subjects, relations
+            )
+            new_jids: dict = ingest_result.get("new_jids", {})
+            needs_rewrite: list = ingest_result.get("needs_rewrite", [])
+
+            # Build lookup for subject data from the extraction results.
+            subject_data_by_name = {s["name"]: s for s in subjects}
+
+            # Mirror only NEW subjects to Qdrant (existing summaries are unchanged).
+            if new_jids:
                 try:
                     from memory.vector import vector_store
-                    for fact, node_id in zip(facts, jids):
+                    for name, node_id in new_jids.items():
+                        s_data = subject_data_by_name.get(name, {})
                         await asyncio.to_thread(
                             vector_store.upsert,
                             node_id,
                             session_id,
-                            "fact",
-                            fact["content"],
+                            "subject",
+                            name,
+                            s_data.get("summary", ""),
+                            s_data.get("subject_type", "other"),
                         )
                 except Exception:
                     vector_ok = False
@@ -69,14 +90,16 @@ async def consolidate_if_needed(session_id: str, store) -> None:
                 event_bus.emit({
                     "event": "MEMORY_CONSOLIDATED",
                     "session_id": session_id,
-                    "fact_count": len(facts),
-                    "jids": jids,
+                    "subject_count": len(subjects),
+                    "relation_count": len(relations),
+                    "rewrites_queued": len(needs_rewrite),
                 })
-                log.info("consolidated %d facts for %s", len(facts), session_id)
+                log.info(
+                    "consolidated %d subjects, %d relations for %s",
+                    len(subjects), len(relations), session_id,
+                )
 
-        # Only advance the consolidation mark when all writes (SQLite + Qdrant)
-        # succeeded. If Qdrant failed, leave the mark where it is so the next
-        # turn re-processes the same batch.
+        # Only advance the consolidation mark when all writes succeeded.
         if vector_ok:
             cutoff = max_id - settings.working_memory_size
             if cutoff > 0:

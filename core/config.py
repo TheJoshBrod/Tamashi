@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     extraction_model: str = "anthropic/claude-haiku-4-5-20251001"
     memory_context_token_budget: int = 1500
     vector_db_path: str = str(_ROOT / "memory" / "qdrant")
+    subject_wal_threshold: int = 5
+    subject_vocabulary_k: int = 10
+    subject_collection: str = "tamashi_subjects"
+    allowed_relation_kinds: list = [
+        "is_a", "has_a", "part_of",
+        "enjoys", "avoids", "wants",
+        "knows", "located_in", "works_at",
+        "causes", "opposite_of",
+        "related_to", "mentions",
+    ]
 
     def model_post_init(self, __context: Any) -> None:
         yaml_data = _load_yaml()

@@ -1,7 +1,7 @@
-"""LiteLLM-based fact extraction from conversation message batches.
+"""LiteLLM-based subject/relation extraction from conversation message batches.
 
 Uses structured JSON output (no Jac by llm() / mtllm dependency).
-Phase 4 can optionally migrate this to a Jac walker using `by llm;`.
+Replaces the old fact extractor with an entity-centric extraction pipeline.
 """
 from __future__ import annotations
 
@@ -14,29 +14,69 @@ from core.config import settings
 
 log = logging.getLogger(__name__)
 
+_SYSTEM = """\
+You are a memory extraction assistant. Extract entities (subjects) and their \
+relationships from a conversation. Focus on durable information: people, pets, \
+places, goals, preferences, health details, recurring events, and named objects.
+Skip small talk, greetings, and anything ephemeral."""
+
 _PROMPT = """\
-Extract 0-5 key facts from the conversation messages below.
-A fact is worth keeping if it would still be useful weeks from now:
-names, preferences, goals, health metrics, appointments, decisions, relationships.
-Skip small talk, greetings, and anything ephemeral.
+{vocab_block}\
+Extract subjects and relations from the conversation below.
 
-Return ONLY valid JSON in this exact shape — no markdown, no explanation:
-{{"facts": [{{"content": "...", "topic": "health|goals|personal|nutrition|other"}}]}}
+Rules:
+- Reuse a name from the vocabulary above if it matches — do not create a \
+duplicate with a different spelling.
+- For subjects already in the vocabulary, provide ONLY "name" and \
+"description_delta" (skip "summary" and "subject_type").
+- For NEW subjects not in the vocabulary, also provide "summary" (~200 chars, \
+stable identity blurb) and "subject_type".
+- subject_type must be one of: person, concept, goal, event, object, place, other
+- relation "kind" must be one of: {allowed_kinds}
+- description_delta should be a concise statement of new information learned \
+in THIS conversation batch.
+- Omit subjects and relations if there is nothing meaningful to extract.
 
-Messages:
+Return ONLY valid JSON — no markdown, no explanation:
+{{
+  "subjects": [
+    {{
+      "name": "string",
+      "description_delta": "string",
+      "summary": "string (new subjects only)",
+      "subject_type": "string (new subjects only)"
+    }}
+  ],
+  "relations": [
+    {{"source": "string", "kind": "string", "target": "string"}}
+  ]
+}}
+
+Conversation:
 {messages}"""
 
 
-def extract_facts(messages: list[dict], source_msg_id: int) -> list[dict]:
-    """Extract facts from a batch of messages.
+def _build_vocab_block(vocabulary: list[dict]) -> str:
+    if not vocabulary:
+        return ""
+    lines = ["Existing subjects (reuse these names if they match):"]
+    for v in vocabulary:
+        lines.append(f"- {v['name']} [{v.get('subject_type', 'other')}]: {v.get('summary', '')}")
+    return "\n".join(lines) + "\n\n"
+
+
+def extract_subjects(messages: list[dict], vocabulary: list[dict]) -> dict:
+    """Extract subjects and relations from a batch of conversation messages.
 
     Args:
-        messages:       list of {"role": str, "content": str | None}
-        source_msg_id:  the SQLite messages.id of the latest message in the batch
+        messages:   list of {"role": str, "content": str | None}
+        vocabulary: list of existing subjects from vector search, each with
+                    {name, summary, subject_type} — injected as extraction hints
 
     Returns:
-        list of {"content": str, "topic": str, "source_msg_id": int}
-        ready to pass directly to bridge.ingest_facts().
+        {"subjects": [...], "relations": [...]}
+        subjects: [{name, description_delta, summary?, subject_type?}]
+        relations: [{source, kind, target}]
     """
     text = "\n".join(
         f"{m['role'].upper()}: {m['content']}"
@@ -44,20 +84,64 @@ def extract_facts(messages: list[dict], source_msg_id: int) -> list[dict]:
         if m.get("content")
     )
     if not text.strip():
-        return []
+        return {"subjects": [], "relations": []}
+
+    vocab_block = _build_vocab_block(vocabulary)
+    allowed_kinds = ", ".join(settings.allowed_relation_kinds)
+    prompt = _PROMPT.format(
+        vocab_block=vocab_block,
+        allowed_kinds=allowed_kinds,
+        messages=text,
+    )
 
     try:
         resp = litellm.completion(
             model=settings.extraction_model,
-            messages=[{"role": "user", "content": _PROMPT.format(messages=text)}],
+            messages=[
+                {"role": "system", "content": _SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
             response_format={"type": "json_object"},
             temperature=0,
         )
         raw = json.loads(resp.choices[0].message.content)
-        facts = raw.get("facts", [])
-        for f in facts:
-            f["source_msg_id"] = source_msg_id
-        return facts
     except Exception:
-        log.exception("fact extraction failed")
-        return []
+        log.exception("subject extraction failed")
+        return {"subjects": [], "relations": []}
+
+    subjects = _validate_subjects(raw.get("subjects", []))
+    relations = _validate_relations(raw.get("relations", []))
+    return {"subjects": subjects, "relations": relations}
+
+
+def _validate_subjects(subjects: list) -> list[dict]:
+    valid = []
+    for s in subjects:
+        if not isinstance(s, dict):
+            continue
+        name = s.get("name", "").strip()
+        delta = s.get("description_delta", "").strip()
+        if not name or not delta:
+            continue
+        valid.append({
+            "name": name,
+            "description_delta": delta,
+            "summary": s.get("summary", "").strip(),
+            "subject_type": s.get("subject_type", "other").strip() or "other",
+        })
+    return valid
+
+
+def _validate_relations(relations: list) -> list[dict]:
+    allowed = set(settings.allowed_relation_kinds)
+    valid = []
+    for r in relations:
+        if not isinstance(r, dict):
+            continue
+        src = r.get("source", "").strip()
+        tgt = r.get("target", "").strip()
+        kind = r.get("kind", "").strip()
+        if not src or not tgt or kind not in allowed:
+            continue
+        valid.append({"source": src, "kind": kind, "target": tgt})
+    return valid

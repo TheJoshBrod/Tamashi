@@ -2,34 +2,30 @@
 
 Architecture:
   - Jac graph (in-process, via jaclang.lib): fast traversal, walker-based GraphRAG
-  - SQLite FactStore (memory/store.py): durable persistence across restarts
-  - Qdrant embedded (memory/vector.py): semantic vector search for Phase 3 retrieval
+  - SQLite SubjectStore (memory/store.py): durable persistence across restarts
+  - Qdrant embedded (memory/vector.py): semantic vector search for retrieval
 
 Write path:
-  ingest_facts → Jac graph (in-process) + SQLite (durable) + Qdrant (vector index)
+  ingest_subjects → Jac graph (in-process) + SQLite (durable) + Qdrant (vector index)
 
-Read path (Phase 3 GraphRAG):
-  1. Vector search → seed jids
-  2. RetrieveByJids walker → 1-hop graph expansion
-  3. Fallback to RetrieveFacts if vector store empty
-  4. Deduplicate + token-budget cap in Python
+Read path (Phase 3 stub — full read path in Phase 4):
+  retrieve_context returns "" until Phase 4 rewrites the read path.
 
 Swapping the graph backend only requires changing this module.
 """
 from __future__ import annotations
 
 import logging
-from core.config import settings
 
+from core.config import settings
 from jaclang.lib import spawn, root
 
-from memory.walkers import GetOrCreateUser, IngestFacts, RetrieveFacts, RetrieveByJids
-from memory.store import fact_store
+from memory.walkers import GetOrCreateUser, IngestSubjects, LoadSubjects, RetrieveSubjects
+from memory.store import subject_store
 
 log = logging.getLogger(__name__)
 
 # Track which user_ids have been loaded into the in-process Jac graph.
-# If a user_id is not in this set on retrieve, we reload from SQLite first.
 _loaded_users: set[str] = set()
 
 
@@ -40,97 +36,202 @@ def _get_user_node(user_id: str):
 
 
 def _ensure_loaded(user_id: str) -> None:
-    """If this user's facts aren't in the Jac graph yet, load them from SQLite."""
+    """If this user's subjects aren't in the Jac graph yet, load them from SQLite.
+
+    Preserves recent_events across restarts: the SQLite store persists the WAL,
+    and this function rehydrates it into the in-memory Subject nodes.
+    """
     if user_id in _loaded_users:
         return
-    # Check whether the Jac graph already has nodes for this user (same process,
-    # cache was invalidated but graph was not cleared — avoids duplicate ingestion).
     user_node = _get_user_node(user_id)
-    probe = spawn(RetrieveFacts(max_facts=1), user_node)
+    # Probe: if subjects already in graph, just mark loaded and return.
+    probe = spawn(RetrieveSubjects(max_subjects=1), user_node)
     if probe.reports:
         _loaded_users.add(user_id)
         return
     # Graph is empty for this user — reload from SQLite (covers process restart).
-    persisted = fact_store.get_facts(user_id, limit=1000)
-    if not persisted:
-        _loaded_users.add(user_id)
-        return
-    facts_for_jac = [
-        {"content": f["content"], "topic": f["topic"], "source_msg_id": 0}
-        for f in persisted
-    ]
-    spawn(IngestFacts(facts=facts_for_jac), user_node)
+    persisted = subject_store.get_subjects(user_id, limit=1000)
+    if persisted:
+        spawn(LoadSubjects(subjects=persisted), user_node)
     _loaded_users.add(user_id)
 
 
-def ingest_facts(user_id: str, facts: list[dict]) -> list[str]:
-    """Write extracted facts into the Jac graph, SQLite, and Qdrant.
+def ingest_subjects(
+    user_id: str,
+    subjects: list[dict],
+    relations: list[dict],
+) -> dict:
+    """Ingest extracted subjects and relations into the Jac graph + SQLite.
 
-    Returns a list of jid strings (one per Fact node) for Qdrant mirroring.
-    The caller (consolidator) handles Qdrant upsert after this returns.
+    Pre-deduplicates same-name subjects by merging their description_deltas
+    before calling the walker (walker receives a clean, deduplicated list).
+
+    Args:
+        user_id:   the user's session / phone number
+        subjects:  list of {name, description_delta, summary?, subject_type?}
+        relations: list of {source, kind, target}
+
+    Returns:
+        {
+          "new_jids": {name: jid_str},   # only newly created subjects
+          "needs_rewrite": [name, ...]   # subjects whose WAL hit the threshold
+        }
     """
-    if not facts:
+    if not subjects and not relations:
+        return {"new_jids": {}, "needs_rewrite": []}
+
+    _ensure_loaded(user_id)
+    user_node = _get_user_node(user_id)
+
+    # Intra-batch deduplication: merge description_deltas for same name.
+    merged: dict[str, dict] = {}
+    for s in subjects:
+        name = s["name"]
+        if name in merged:
+            existing_delta = merged[name]["description_delta"]
+            new_delta = s["description_delta"]
+            merged[name]["description_delta"] = f"{existing_delta}\n{new_delta}".strip()
+        else:
+            merged[name] = {
+                "name": name,
+                "summary": s.get("summary", ""),
+                "description_delta": s["description_delta"],
+                "subject_type": s.get("subject_type", "other") or "other",
+                # recent_events = new deltas to APPEND to the existing node list
+                "recent_events": [s["description_delta"]],
+            }
+
+    deduped = list(merged.values())
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
+    result = spawn(IngestSubjects(subjects=deduped, relations=relations, now=now), user_node)
+
+    new_jids: dict[str, str] = {}
+    needs_rewrite: list[str] = []
+
+    for report in result.reports:
+        name = str(report.get("name", ""))
+        is_new = bool(report.get("is_new", False))
+        jid_val = str(report.get("jid", ""))
+        recent_events = list(report.get("recent_events", []))
+
+        if is_new:
+            new_jids[name] = jid_val
+            s_data = merged[name]
+            subject_store.upsert_subject(
+                user_id=user_id,
+                name=name,
+                summary=s_data["summary"],
+                description=s_data["description_delta"],
+                subject_type=s_data["subject_type"],
+                recent_events=recent_events,
+                node_jid=jid_val,
+            )
+        else:
+            subject_store.update_subject_wal(user_id, name, recent_events)
+
+        if len(recent_events) >= settings.subject_wal_threshold:
+            needs_rewrite.append(name)
+
+    for rel in relations:
+        subject_store.upsert_relation(
+            user_id=user_id,
+            src_name=rel["source"],
+            kind=rel["kind"],
+            tgt_name=rel["target"],
+        )
+
+    _loaded_users.add(user_id)
+    return {"new_jids": new_jids, "needs_rewrite": needs_rewrite}
+
+
+def lookup_vocabulary(
+    user_id: str,
+    conversation_text: str,
+    k: int | None = None,
+) -> list[dict]:
+    """Return up to k existing subjects relevant to the conversation.
+
+    Used to build the vocabulary injection block in extraction prompts.
+    Returns [{name, summary, subject_type}] with ~200-char summaries.
+    Returns [] gracefully if vector store is empty or unavailable.
+    """
+    if not settings.long_term_memory_enabled:
         return []
-    _ensure_loaded(user_id)
-    user_node = _get_user_node(user_id)
-    result = spawn(IngestFacts(facts=facts), user_node)
-    jids: list[str] = [str(j) for j in result.reports]
-    # Persist to SQLite so facts survive process restart.
-    fact_store.insert(user_id, facts, jids)
-    _loaded_users.add(user_id)
-    return jids
+    if k is None:
+        k = settings.subject_vocabulary_k
+    try:
+        from memory.vector import vector_store
+        results = vector_store.search_with_payload(user_id, conversation_text, k=k)
+        vocab = []
+        for r in results:
+            payload = r.get("payload", {})
+            vocab.append({
+                "name": payload.get("name", ""),
+                "summary": payload.get("summary", ""),
+                "subject_type": payload.get("subject_type", "other"),
+            })
+        return [v for v in vocab if v["name"]]
+    except Exception:
+        log.debug("lookup_vocabulary failed, returning empty vocabulary")
+        return []
 
 
-def retrieve_context(user_id: str, query: str = "", max_facts: int = 10) -> str:
-    """Return a formatted memory block to prepend to the LLM prompt.
+def retrieve_context(user_id: str, query: str = "", max_subjects: int = 10) -> str:
+    """Return a formatted memory block for the LLM prompt.
 
-    Phase 3 two-step GraphRAG:
-      1. Vector search → seed jids (returns [] if store empty)
-      2. RetrieveByJids walker → 1-hop graph expansion
-      3. Fallback to RetrieveFacts if seeds are empty
-      4. Deduplicate, cap to max_facts, format as bullet list
-
-    Returns an empty string if there are no stored facts.
+    Phase 3 stub: returns basic subject summaries via naive graph retrieval.
+    Full GraphRAG read path (RetrieveBySubjectJids + markdown formatter) is Phase 4.
+    Returns "" if no subjects are stored yet.
     """
-    _ensure_loaded(user_id)
-    user_node = _get_user_node(user_id)
+    if not settings.long_term_memory_enabled:
+        return ""
+    try:
+        _ensure_loaded(user_id)
+        user_node = _get_user_node(user_id)
 
-    # Step 1: vector search for semantically similar facts
-    seed_jids: list[str] = []
-    if settings.long_term_memory_enabled:
-        try:
-            from memory.vector import vector_store
-            seed_jids = vector_store.search(user_id, query, k=5)
-        except Exception:
-            log.debug("vector search unavailable, falling back to naive retrieval")
+        # Phase 3: try vector search, fall back to naive graph retrieval.
+        seed_jids: list[str] = []
+        if query:
+            try:
+                from memory.vector import vector_store
+                seed_jids = vector_store.search(user_id, query, k=5)
+            except Exception:
+                pass
 
-    # Step 2: GraphRAG expansion via Jac walker, or naive fallback
-    if seed_jids:
-        result = spawn(RetrieveByJids(seed_jids=seed_jids), user_node)
-    else:
-        result = spawn(RetrieveFacts(max_facts=max_facts), user_node)
+        if seed_jids:
+            from memory.walkers import RetrieveBySubjectJids
+            result = spawn(RetrieveBySubjectJids(seed_jids=seed_jids), user_node)
+        else:
+            result = spawn(RetrieveSubjects(max_subjects=max_subjects), user_node)
 
-    if not result.reports:
+        if not result.reports:
+            return ""
+
+        seen: set[str] = set()
+        lines = []
+        for r in result.reports:
+            name = str(r.get("name", ""))
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            summary = str(r.get("summary", ""))
+            lines.append(f"- {name}: {summary}" if summary else f"- {name}")
+            if len(lines) >= max_subjects:
+                break
+
+        if not lines:
+            return ""
+        return "Relevant memory:\n" + "\n".join(lines)
+    except Exception:
+        log.debug("retrieve_context failed gracefully", exc_info=True)
         return ""
 
-    # Step 3: deduplicate (RetrieveByJids can report the same neighbor twice)
-    seen: set[str] = set()
-    deduped = []
-    for r in result.reports:
-        key = str(r.get("jid", r.get("content", "")))
-        if key not in seen:
-            seen.add(key)
-            deduped.append(r)
-        if len(deduped) >= max_facts:
-            break
 
-    lines = [f"- [{r['topic']}] {r['content']}" for r in deduped]
-    return "Relevant memory:\n" + "\n".join(lines)
-
-
-def list_user_facts(user_id: str) -> list[dict]:
-    """Return all facts for a user. Used by tests and debug endpoints."""
+def list_user_subjects(user_id: str) -> list[dict]:
+    """Return all subjects for a user. Used by tests and debug endpoints."""
     _ensure_loaded(user_id)
     user_node = _get_user_node(user_id)
-    result = spawn(RetrieveFacts(max_facts=1000), user_node)
+    result = spawn(RetrieveSubjects(max_subjects=1000), user_node)
     return result.reports

@@ -1,14 +1,16 @@
-"""SQLite backing store for memory facts.
+"""SQLite backing store for entity-centric memory subjects and relations.
 
 Jac library mode is in-memory only (no cross-restart persistence).
-This module provides durable storage: every fact written to the Jac graph
-is also written here. On startup or on cache miss, facts are reloaded from
-SQLite back into the Jac graph.
+This module provides durable storage: every Subject and Relates edge written
+to the Jac graph is also written here. On startup or on cache miss, subjects
+(including their recent_events WAL) are reloaded from SQLite back into the
+Jac graph.
 
-Table lives in sessions.db alongside the messages table.
+Tables live in sessions.db alongside the messages table.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -16,7 +18,7 @@ from pathlib import Path
 from core.config import settings
 
 
-class FactStore:
+class SubjectStore:
     def __init__(self, db_path: str | None = None) -> None:
         self._db_path = db_path or settings.db_path
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -34,63 +36,172 @@ class FactStore:
 
     def _init_db(self) -> None:
         with self._conn() as con:
+            # Drop legacy fact table from old architecture
+            con.execute("DROP TABLE IF EXISTS memory_facts")
+
             con.execute("""
-                CREATE TABLE IF NOT EXISTS memory_facts (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id     TEXT    NOT NULL,
-                    content     TEXT    NOT NULL,
-                    topic       TEXT    NOT NULL DEFAULT 'other',
-                    source_msg_id INTEGER,
-                    node_jid    TEXT,
-                    created_at  TEXT    DEFAULT (datetime('now'))
+                CREATE TABLE IF NOT EXISTS memory_subjects (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id      TEXT    NOT NULL,
+                    name         TEXT    NOT NULL,
+                    summary      TEXT    NOT NULL DEFAULT '',
+                    description  TEXT    NOT NULL DEFAULT '',
+                    subject_type TEXT    NOT NULL DEFAULT 'other',
+                    recent_events TEXT   NOT NULL DEFAULT '[]',
+                    node_jid     TEXT,
+                    created_at   TEXT    DEFAULT (datetime('now')),
+                    updated_at   TEXT    DEFAULT (datetime('now'))
                 )
             """)
+            con.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_subjects_user_name
+                ON memory_subjects(user_id, name)
+            """)
+
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS memory_relations (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id    TEXT    NOT NULL,
+                    src_name   TEXT    NOT NULL,
+                    kind       TEXT    NOT NULL,
+                    tgt_name   TEXT    NOT NULL,
+                    weight     REAL    DEFAULT 1.0,
+                    created_at TEXT    DEFAULT (datetime('now')),
+                    updated_at TEXT    DEFAULT (datetime('now'))
+                )
+            """)
+            con.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_relations_triple
+                ON memory_relations(user_id, src_name, kind, tgt_name)
+            """)
+
+    # --- Subjects ---
+
+    def upsert_subject(
+        self,
+        user_id: str,
+        name: str,
+        summary: str,
+        description: str,
+        subject_type: str,
+        recent_events: list,
+        node_jid: str | None = None,
+    ) -> None:
+        """Insert or update a subject. On conflict (user_id, name), update all fields."""
+        with self._conn() as con:
             con.execute(
-                "CREATE INDEX IF NOT EXISTS idx_facts_user ON memory_facts(user_id)"
+                """
+                INSERT INTO memory_subjects
+                    (user_id, name, summary, description, subject_type, recent_events, node_jid, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                ON CONFLICT(user_id, name) DO UPDATE SET
+                    summary       = excluded.summary,
+                    description   = excluded.description,
+                    subject_type  = excluded.subject_type,
+                    recent_events = excluded.recent_events,
+                    node_jid      = excluded.node_jid,
+                    updated_at    = datetime('now')
+                """,
+                (user_id, name, summary, description, subject_type,
+                 json.dumps(recent_events), node_jid),
             )
 
-    def insert(self, user_id: str, facts: list[dict], jids: list[str]) -> None:
-        """Persist a batch of facts and their Jac node IDs."""
-        with self._conn() as con:
-            for fact, jid in zip(facts, jids):
-                con.execute(
-                    "INSERT INTO memory_facts (user_id, content, topic, source_msg_id, node_jid) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (user_id, fact["content"], fact["topic"],
-                     fact.get("source_msg_id"), jid),
-                )
-
-    def get_facts(self, user_id: str, limit: int = 1000) -> list[dict]:
-        """Return facts for a user, most recent first."""
+    def get_subjects(self, user_id: str, limit: int = 1000) -> list[dict]:
+        """Return all subjects for a user, most recently updated first."""
         with self._conn() as con:
             rows = con.execute(
-                "SELECT content, topic, node_jid FROM memory_facts "
-                "WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                """
+                SELECT name, summary, description, subject_type, recent_events,
+                       node_jid, created_at, updated_at
+                FROM memory_subjects
+                WHERE user_id = ?
+                ORDER BY updated_at DESC LIMIT ?
+                """,
                 (user_id, limit),
             ).fetchall()
-        return [{"content": r["content"], "topic": r["topic"], "jid": r["node_jid"]}
-                for r in rows]
+        return [
+            {
+                "name": r["name"],
+                "summary": r["summary"],
+                "description": r["description"],
+                "subject_type": r["subject_type"],
+                "recent_events": json.loads(r["recent_events"]),
+                "jid": r["node_jid"],
+                "created_at": r["created_at"] or "",
+                "updated_at": r["updated_at"] or "",
+            }
+            for r in rows
+        ]
+
+    def update_subject_wal(self, user_id: str, name: str, recent_events: list) -> None:
+        """Update only the recent_events WAL for an existing subject."""
+        with self._conn() as con:
+            con.execute(
+                """
+                UPDATE memory_subjects
+                SET recent_events = ?, updated_at = datetime('now')
+                WHERE user_id = ? AND name = ?
+                """,
+                (json.dumps(recent_events), user_id, name),
+            )
 
     def has_user(self, user_id: str) -> bool:
         with self._conn() as con:
             row = con.execute(
-                "SELECT 1 FROM memory_facts WHERE user_id = ? LIMIT 1", (user_id,)
+                "SELECT 1 FROM memory_subjects WHERE user_id = ? LIMIT 1", (user_id,)
             ).fetchone()
         return row is not None
 
     def list_users(self) -> list[str]:
-        """Return all user_ids that have stored facts. Used by the nightly linker."""
+        """Return all user_ids with stored subjects. Used by the nightly linker."""
         with self._conn() as con:
             rows = con.execute(
-                "SELECT DISTINCT user_id FROM memory_facts"
+                "SELECT DISTINCT user_id FROM memory_subjects"
             ).fetchall()
         return [r["user_id"] for r in rows]
 
     def delete_user(self, user_id: str) -> None:
-        """Remove all facts for a user (used in tests and /forget command)."""
+        """Remove all subjects and relations for a user."""
         with self._conn() as con:
-            con.execute("DELETE FROM memory_facts WHERE user_id = ?", (user_id,))
+            con.execute("DELETE FROM memory_subjects WHERE user_id = ?", (user_id,))
+            con.execute("DELETE FROM memory_relations WHERE user_id = ?", (user_id,))
+
+    # --- Relations ---
+
+    def upsert_relation(
+        self,
+        user_id: str,
+        src_name: str,
+        kind: str,
+        tgt_name: str,
+        weight: float = 1.0,
+    ) -> None:
+        """Insert or update a relation triple. On conflict, updates weight and updated_at."""
+        with self._conn() as con:
+            con.execute(
+                """
+                INSERT INTO memory_relations
+                    (user_id, src_name, kind, tgt_name, weight)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, src_name, kind, tgt_name) DO UPDATE SET
+                    weight     = excluded.weight,
+                    updated_at = datetime('now')
+                """,
+                (user_id, src_name, kind, tgt_name, weight),
+            )
+
+    def get_relations(self, user_id: str) -> list[dict]:
+        """Return all relations for a user."""
+        with self._conn() as con:
+            rows = con.execute(
+                """
+                SELECT src_name, kind, tgt_name, weight, created_at, updated_at
+                FROM memory_relations WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
 
 # Module-level singleton — same lifetime as the process.
-fact_store = FactStore()
+subject_store = SubjectStore()
