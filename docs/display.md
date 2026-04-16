@@ -95,6 +95,29 @@ The UI is backed by REST endpoints under `/display/api/memory/`:
 
 All endpoints accept an optional `user_id` query parameter (default: `"default_user"`).
 
+### Performance Notes
+The Memory Graph uses `vis.js` and is highly optimized to handle up to 500 nodes smoothly:
+- **Canvas Drop Shadows**: Disabled globally to drastically reduce GPU jitter when zoomed deeply into the graph.
+- **Edge Physics**: `dynamic` smoothing is applied, meaning curves are only calculated when the physics engine rests, rendering as inexpensive straight lines when nodes are dragged.
+- **Interaction Hiding**: Edges disappear temporarily while dragging a node to maintain high 60fps framerates during heavy interaction.
+- **Initial Load**: To prevent rendering freezes when a massive overlapping node cluster spawns at `(0,0)`, the camera intentionally zooms out (`scale: 0.15`) immediately upon refresh.
+- **Loading Spinner**: A fallback 2.5s maximum timeout ensures the UI safely drops the loading spinner if the physics engine never fully stabilizes (e.g., when forces are perfectly balanced).
+
+---
+
+## Topology Testing Scripts
+
+There are several helper scripts included in the `scripts/` directory to stress-test layout generation, rendering metrics, and UI interactivity. Each script interacts directly with the running REST API (`http://localhost:8000/display/api/memory`), ensuring real-time graphical updates without a backend restart.
+
+| Script | Purpose | Description |
+|--------|---------|-------------|
+| `delete_temp_nodes.py` | Graph Cleanup | Purges all nodes prefixed with `Node_` in both the Active API and databases. |
+| `populate_giant_web.py`| Load Testing | Generates 200 nodes and 400 random connections. |
+| `populate_tree.py`     | Determinism   | Generates a deeply nested, multi-branch hierarchical topography. |
+| `populate_clusters.py` | Gravity Testing | Generates completely disconnected islands to test force repulsion without cross-edges. |
+| `populate_hub.py`      | Bottlenecks   | Generates 3 massive "star" nodes connected to hundreds of isolated leaf nodes to test gravitational pull. |
+| `populate_isolated.py` | Unconnected   | Generates 100 perfectly isolated nodes with 0 edges to test standalone float behavior. |
+
 ---
 
 ## Emotion Dashboard

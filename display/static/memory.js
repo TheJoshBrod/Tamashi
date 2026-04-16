@@ -207,7 +207,10 @@ function initGraph() {
     }
   });
 
-  network.on('stabilized', () => setLoading(false));
+  network.on('stabilized', () => {
+    setLoading(false);
+    if (window._stabilizeTimeout) clearTimeout(window._stabilizeTimeout);
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -285,7 +288,17 @@ async function refreshGraph({ focusName } = {}) {
           };
           network.on('stabilized', onStabilized);
         }
+      } else {
+        /* Default to a highly zoomed out perspective to avoid initial render lag */
+        /* as nodes violently repel from (0,0) */
+        network.moveTo({ scale: 0.15 });
       }
+
+
+      /* Backup timeout in case stabilization takes forever or physics is paused */
+      if (window._stabilizeTimeout) clearTimeout(window._stabilizeTimeout);
+      window._stabilizeTimeout = setTimeout(() => setLoading(false), 2500);
+
     } else {
       document.getElementById('empty-state').style.display = 'block';
       setLoading(false);
