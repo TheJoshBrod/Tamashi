@@ -178,6 +178,19 @@ class QdrantMemoryStore:
             log.exception("vector search_with_payload failed for user %s", user_id)
             return []
 
+    def delete(self, node_id: str) -> None:
+        """Delete a point by node_id. Derived from node_id hash."""
+        try:
+            client = self._get_client()
+            point_id = int(hashlib.md5(node_id.encode()).hexdigest(), 16) % (2 ** 63)
+            client.delete(
+                collection_name=settings.subject_collection,
+                points_selector=[point_id],
+            )
+        except Exception:
+            log.exception("vector delete failed for node %s", node_id)
+
+
     def count(self, user_id: str) -> int:
         """Return number of indexed points for a user. Used by linker."""
         try:

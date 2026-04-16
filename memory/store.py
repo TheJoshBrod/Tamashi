@@ -160,6 +160,26 @@ class SubjectStore:
             ).fetchall()
         return [r["user_id"] for r in rows]
 
+    def delete_subject(self, user_id: str, name: str) -> None:
+        """Delete a subject and all relations that reference it."""
+        with self._conn() as con:
+            con.execute(
+                "DELETE FROM memory_subjects WHERE user_id = ? AND name = ?",
+                (user_id, name),
+            )
+            con.execute(
+                "DELETE FROM memory_relations WHERE user_id = ? AND (src_name = ? OR tgt_name = ?)",
+                (user_id, name, name),
+            )
+
+    def delete_relation(self, user_id: str, src_name: str, kind: str, tgt_name: str) -> None:
+        """Delete a specific relation triple."""
+        with self._conn() as con:
+            con.execute(
+                "DELETE FROM memory_relations WHERE user_id = ? AND src_name = ? AND kind = ? AND tgt_name = ?",
+                (user_id, src_name, kind, tgt_name),
+            )
+
     def delete_user(self, user_id: str) -> None:
         """Remove all subjects and relations for a user."""
         with self._conn() as con:
