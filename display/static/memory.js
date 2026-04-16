@@ -1,420 +1,752 @@
+/* ═══════════════════════════════════════════════════════════
+   Tamashi | Memory Cartography
+   ═══════════════════════════════════════════════════════════ */
+
 let network = null;
-let nodes = new vis.DataSet([]);
-let edges = new vis.DataSet([]);
-let selectedNodeJid = null;
-let pendingEdgeData = null;
+let nodes   = new vis.DataSet([]);
+let edges   = new vis.DataSet([]);
+let selectedNodeJid    = null;
+let selectedEdgeId     = null;
+let currentSidebarMode = 'node'; // 'node' | 'edge'
+let pendingEdgeData    = null;
 let pendingEdgeCallback = null;
 
-const TYPE_COLORS = {
-    person: '#ef4444',
-    concept: '#38bdf8',
-    goal: '#22c55e',
-    event: '#f59e0b',
-    place: '#8b5cf6',
-    object: '#ec4899',
-    other: '#94a3b8'
+/* ── Type styling ─────────────────────────────────────────── */
+const TYPE_META = {
+  person:  { border: '#e87c8a', bg: '#1a0c10', shadow: 'rgba(232,124,138,0.55)' },
+  concept: { border: '#7cb4e8', bg: '#0c1220', shadow: 'rgba(124,180,232,0.55)' },
+  goal:    { border: '#7ce8a8', bg: '#0c1a14', shadow: 'rgba(124,232,168,0.55)' },
+  event:   { border: '#e8c87c', bg: '#1a1510', shadow: 'rgba(232,200,124,0.55)' },
+  place:   { border: '#b47ce8', bg: '#100c1a', shadow: 'rgba(180,124,232,0.55)' },
+  object:  { border: '#e87cb4', bg: '#1a0c15', shadow: 'rgba(232,124,180,0.55)' },
+  other:   { border: '#7090a4', bg: '#0c0e14', shadow: 'rgba(112,144,164,0.45)' },
 };
 
+/* ── Bootstrap ────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
-    initGraph();
-    refreshGraph();
+  initBackground();
+  initGraph();
+  refreshGraph();
 
-    // Global ESC key listener for dismissing overlays
-    window.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            closeSidebar();
-            closeRelationModal(false);
-        }
-    });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (network) network.disableEditMode();
+      closeSidebar();
+      closeRelationModal(false);
+      closeFab();
+    }
+  });
 });
 
+/* ═══════════════════════════════════════════════════════════
+   PARTICLE BACKGROUND
+   ═══════════════════════════════════════════════════════════ */
+function initBackground() {
+  const canvas = document.getElementById('bg-canvas');
+  const ctx    = canvas.getContext('2d');
+  const CONNECT_DIST = 110;
+  const COUNT = 70;
+
+  function resize() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  const particles = Array.from({ length: COUNT }, () => ({
+    x:  Math.random() * canvas.width,
+    y:  Math.random() * canvas.height,
+    vx: (Math.random() - 0.5) * 0.12,
+    vy: (Math.random() - 0.5) * 0.12,
+    r:  Math.random() * 1.2 + 0.4,
+    o:  Math.random() * 0.35 + 0.08,
+  }));
+
+  function frame() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    /* connections */
+    for (let i = 0; i < COUNT; i++) {
+      for (let j = i + 1; j < COUNT; j++) {
+        const dx   = particles[i].x - particles[j].x;
+        const dy   = particles[i].y - particles[j].y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < CONNECT_DIST) {
+          const a = (1 - dist / CONNECT_DIST) * 0.07;
+          ctx.beginPath();
+          ctx.moveTo(particles[i].x, particles[i].y);
+          ctx.lineTo(particles[j].x, particles[j].y);
+          ctx.strokeStyle = `rgba(201,168,76,${a})`;
+          ctx.lineWidth   = 0.5;
+          ctx.stroke();
+        }
+      }
+    }
+
+    /* points */
+    particles.forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(201,168,76,${p.o})`;
+      ctx.fill();
+
+      /* drift & wrap */
+      p.x += p.vx;
+      p.y += p.vy;
+      if (p.x < 0)             p.x = canvas.width;
+      if (p.x > canvas.width)  p.x = 0;
+      if (p.y < 0)             p.y = canvas.height;
+      if (p.y > canvas.height) p.y = 0;
+    });
+
+    requestAnimationFrame(frame);
+  }
+
+  frame();
+}
+
+/* ═══════════════════════════════════════════════════════════
+   VIS.JS GRAPH
+   ═══════════════════════════════════════════════════════════ */
 function initGraph() {
-    const container = document.getElementById('graph-container');
-    const data = { nodes, edges };
-    const options = {
-        nodes: {
-            shape: 'dot',
-            size: 25,
-            font: { color: '#f8fafc', size: 14, strokeWidth: 2, strokeColor: '#0f172a' },
-            borderWidth: 2,
-            shadow: true,
-            scaling: { label: { enabled: true, min: 14, max: 24 } }
-        },
-        edges: {
-            width: 2,
-            color: { color: '#445566', highlight: '#38bdf8' },
-            arrows: { to: { enabled: true, scaleFactor: 0.5 } },
-            font: { size: 12, color: '#94a3b8', align: 'middle' },
-            smooth: { type: 'continuous' }
-        },
-        physics: {
-            forceAtlas2Based: {
-                gravitationalConstant: -100,
-                centralGravity: 0.01,
-                springLength: 150,
-                springConstant: 0.08
-            },
-            maxVelocity: 50,
-            solver: 'forceAtlas2Based',
-            stabilization: { iterations: 150 }
-        },
-        interaction: {
-            hover: true,
-            multiselect: false,
-            navigationButtons: false // Using custom zoom controls
-        },
-        manipulation: {
-            enabled: true,
-            addNode: false,
-            // Vis.js standalone expects a function for editNode if manipulation is enabled
-            editNode: function (data, callback) { callback(data); },
-            addEdge: function (edgeData, callback) {
-                showRelationModal(edgeData, callback);
-            },
-            deleteNode: function (data, callback) {
-                const jid = data.nodes[0];
-                if (confirm("Permanently delete this memory subject?")) {
-                    apiDeleteSubject(jid, () => callback(data));
-                } else {
-                    callback(null);
-                }
-            },
-            deleteEdge: function (data, callback) {
-                const edgeId = data.edges[0];
-                const edge = edges.get(edgeId);
-                if (confirm("Delete this relationship?")) {
-                    apiDeleteRelation(edge, () => callback(data));
-                } else {
-                    callback(null);
-                }
-            }
-        }
-    };
+  const container = document.getElementById('graph-container');
 
-    network = new vis.Network(container, data, options);
-
-    // Reliable Selection
-    network.on("click", (params) => {
-        if (params.nodes.length > 0) {
-            const nodeJid = params.nodes[0];
-            showDetails(nodeJid);
+  const options = {
+    nodes: {
+      shape: 'dot',
+      size: 20,
+      font: {
+        color: '#ece4d4',
+        size: 13,
+        face: '"JetBrains Mono", monospace',
+        strokeWidth: 3,
+        strokeColor: '#040410',
+      },
+      borderWidth: 2,
+      shadow: { enabled: true, size: 18, x: 0, y: 0 },
+      scaling: { label: { enabled: true, min: 12, max: 22 } },
+    },
+    edges: {
+      width: 1.4,
+      color: {
+        color:     'rgba(201,168,76,0.18)',
+        highlight: 'rgba(201,168,76,0.75)',
+        hover:     'rgba(201,168,76,0.45)',
+      },
+      arrows: { to: { enabled: true, scaleFactor: 0.38 } },
+      font: {
+        size:        10,
+        color:       'rgba(201,168,76,0.55)',
+        face:        '"JetBrains Mono", monospace',
+        align:       'middle',
+        strokeWidth: 3,
+        strokeColor: '#040410',
+      },
+      smooth: { type: 'continuous', roundness: 0.15 },
+    },
+    physics: {
+      forceAtlas2Based: {
+        gravitationalConstant: -90,
+        centralGravity:        0.008,
+        springLength:          160,
+        springConstant:        0.07,
+      },
+      maxVelocity: 45,
+      solver: 'forceAtlas2Based',
+      stabilization: { iterations: 150 },
+    },
+    interaction: {
+      hover: true,
+      multiselect: false,
+      navigationButtons: false,
+      tooltipDelay: 200,
+    },
+    manipulation: {
+      enabled: true,
+      addNode: false,
+      editNode: (data, callback) => callback(data),
+      addEdge: (edgeData, callback) => showRelationModal(edgeData, callback),
+      deleteNode: (data, callback) => {
+        const jid = data.nodes[0];
+        if (confirm('Permanently remove this subject from memory?')) {
+          apiDeleteSubject(jid, () => callback(data));
         } else {
-            // Check if we clicked "nothing" (close sidebar)
-            if (params.nodes.length === 0 && params.edges.length === 0) {
-                closeSidebar();
-            }
+          callback(null);
         }
-    });
+      },
+      deleteEdge: (data, callback) => {
+        const edge = edges.get(data.edges[0]);
+        if (confirm('Delete this relationship?')) {
+          apiDeleteRelation(edge, () => callback(data));
+        } else {
+          callback(null);
+        }
+      },
+    },
+  };
 
-    network.on("stabilized", () => {
-        setLoading(false);
-    });
+  network = new vis.Network(container, { nodes, edges }, options);
+
+  network.on('click', (params) => {
+    if (params.nodes.length > 0) {
+      showDetails(params.nodes[0]);
+    } else if (params.edges.length > 0) {
+      showEdgeDetails(params.edges[0]);
+    } else {
+      closeSidebar();
+    }
+  });
+
+  network.on('stabilized', () => setLoading(false));
 }
 
-function setLoading(active) {
-    document.getElementById('loading-overlay').style.display = active ? 'flex' : 'none';
-}
-
-function showToast(message) {
-    const container = document.getElementById('toast-container');
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-    toast.innerText = message;
-    container.appendChild(toast);
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        setTimeout(() => toast.remove(), 300);
-    }, 3000);
-}
-
+/* ═══════════════════════════════════════════════════════════
+   DATA LAYER
+   ═══════════════════════════════════════════════════════════ */
 async function refreshGraph() {
-    setLoading(true);
-    try {
-        const response = await fetch('/display/api/memory/graph');
-        const data = await response.json();
+  setLoading(true);
+  try {
+    const res  = await fetch('/display/api/memory/graph');
+    const data = await res.json();
 
-        const formattedNodes = data.nodes.map(subject => ({
-            id: subject.jid,
-            label: subject.name,
-            title: createNodeTooltip(subject),
-            color: subject.subject_type ? TYPE_COLORS[subject.subject_type.toLowerCase()] || TYPE_COLORS.other : TYPE_COLORS.other,
-            subject: subject // Keep full subject data for later
-        }));
+    const formattedNodes = data.nodes.map(subject => {
+      const type = subject.subject_type?.toLowerCase() || 'other';
+      const meta = TYPE_META[type] || TYPE_META.other;
+      return {
+        id:    subject.jid,
+        label: subject.name,
+        title: buildTooltip(subject),
+        color: {
+          background: meta.bg,
+          border:     meta.border,
+          highlight:  { background: meta.bg,    border: '#c9a84c' },
+          hover:      { background: meta.bg,    border: meta.border },
+        },
+        shadow: { color: meta.shadow },
+        subject,
+      };
+    });
 
-        nodes.clear();
-        edges.clear();
+    nodes.clear();
+    edges.clear();
 
-        if (formattedNodes.length > 0) {
-            nodes.add(formattedNodes);
-            edges.add(data.edges);
-            document.getElementById('empty-state').style.display = 'none';
-        } else {
-            document.getElementById('empty-state').style.display = 'block';
-            setLoading(false);
-        }
-    } catch (err) {
-        console.error("Failed to refresh graph:", err);
-        showToast("Error: " + err.message);
-        setLoading(false);
+    /* Update stats */
+    const sEl = document.getElementById('stat-subjects');
+    const rEl = document.getElementById('stat-relations');
+    sEl.textContent = formattedNodes.length;
+    rEl.textContent = data.edges.length;
+    sEl.classList.toggle('loaded', formattedNodes.length > 0);
+    rEl.classList.toggle('loaded', data.edges.length > 0);
+
+    /* Keep datalist in sync for the new-relation sidebar */
+    const datalist = document.getElementById('subjects-list');
+    datalist.innerHTML = '';
+    formattedNodes.forEach(n => {
+      const opt = document.createElement('option');
+      opt.value = n.label;
+      datalist.appendChild(opt);
+    });
+
+    if (formattedNodes.length > 0) {
+      nodes.add(formattedNodes);
+      edges.add(data.edges);
+      document.getElementById('empty-state').style.display = 'none';
+    } else {
+      document.getElementById('empty-state').style.display = 'block';
+      setLoading(false);
     }
+  } catch (err) {
+    console.error('Failed to refresh graph:', err);
+    showToast('Error loading graph: ' + err.message);
+    setLoading(false);
+  }
 }
 
-function showDetails(jid) {
-    const node = nodes.get(jid);
-    if (!node) return;
-
-    selectedNodeJid = jid;
-    const subject = node.subject || {};
-
-    document.getElementById('edit-jid').value = jid;
-    document.getElementById('edit-name').value = subject.name || '';
-    document.getElementById('edit-summary').value = subject.summary || '';
-    document.getElementById('edit-description').value = subject.description || '';
-    document.getElementById('edit-type').value = subject.subject_type?.toLowerCase() || 'other';
-
-    document.getElementById('detail-title').innerText = "Details: " + (subject.name || "Subject");
-    document.getElementById('sidebar').classList.remove('sidebar-hidden');
-
-    document.getElementById('save-btn').innerText = "Save Changes";
-}
-
-function closeSidebar() {
-    document.getElementById('sidebar').classList.add('sidebar-hidden');
-    selectedNodeJid = null;
-    if (network) network.unselectAll();
-}
-
+/* ── Subject CRUD ─────────────────────────────────────────── */
 async function saveSubject() {
-    const jid = document.getElementById('edit-jid').value;
-    const isNew = !jid;
+  const jid   = document.getElementById('edit-jid').value;
+  const isNew = !jid;
 
-    const payload = {
-        name: document.getElementById('edit-name').value,
-        summary: document.getElementById('edit-summary').value,
-        description: document.getElementById('edit-description').value,
-        subject_type: document.getElementById('edit-type').value
-    };
+  const payload = {
+    name:         document.getElementById('edit-name').value.trim(),
+    summary:      document.getElementById('edit-summary').value.trim(),
+    description:  document.getElementById('edit-description').value.trim(),
+    subject_type: document.getElementById('edit-type').value,
+  };
 
-    if (!payload.name) {
-        showToast("Name is required");
-        return;
+  if (!payload.name) { showToast('Name is required'); return; }
+
+  setLoading(true);
+  const url    = isNew
+    ? '/display/api/memory/subjects'
+    : `/display/api/memory/subjects/${encodeURIComponent(jid)}`;
+  const method = isNew ? 'POST' : 'PUT';
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      showToast(isNew ? 'Subject created' : 'Subject saved');
+      closeSidebar();
+      refreshGraph();
+    } else {
+      const err = await res.json();
+      showToast('Error: ' + err.detail);
+      setLoading(false);
     }
-
-    setLoading(true);
-    const encodedJid = encodeURIComponent(jid);
-    const url = isNew ? '/display/api/memory/subjects' : `/display/api/memory/subjects/${encodedJid}`;
-    const method = isNew ? 'POST' : 'PUT';
-
-    try {
-        const res = await fetch(url, {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (res.ok) {
-            showToast(isNew ? "Created new subject" : "Saved changes");
-            refreshGraph();
-            closeSidebar();
-        } else {
-            const err = await res.json();
-            showToast("Error saving: " + err.detail);
-            setLoading(false);
-        }
-    } catch (err) {
-        showToast("Request failed: " + err.message);
-        setLoading(false);
-    }
+  } catch (err) {
+    showToast('Request failed: ' + err.message);
+    setLoading(false);
+  }
 }
 
 async function apiDeleteSubject(jid, callback) {
-    setLoading(true);
-    try {
-        const encodedJid = encodeURIComponent(jid);
-        const res = await fetch(`/display/api/memory/subjects/${encodedJid}`, { method: 'DELETE' });
-        if (res.ok) {
-            showToast("Subject deleted");
-            callback();
-        } else {
-            const err = await res.json();
-            showToast("Delete failed: " + err.detail);
-        }
-    } catch (err) {
-        showToast("Delete failed: " + err.message);
-    } finally {
-        setLoading(false);
+  setLoading(true);
+  try {
+    const res = await fetch(
+      `/display/api/memory/subjects/${encodeURIComponent(jid)}`,
+      { method: 'DELETE' }
+    );
+    if (res.ok) {
+      showToast('Subject removed');
+      callback();
+    } else {
+      const err = await res.json();
+      showToast('Delete failed: ' + err.detail);
     }
+  } catch (err) {
+    showToast('Delete failed: ' + err.message);
+  } finally {
+    setLoading(false);
+  }
 }
 
 async function saveRelation(edgeData, kind, callback) {
-    const srcNode = nodes.get(edgeData.from);
-    const tgtNode = nodes.get(edgeData.to);
+  const srcNode = nodes.get(edgeData.from);
+  const tgtNode = nodes.get(edgeData.to);
 
-    if (!srcNode || !tgtNode) {
-        showToast("Error: Node context lost");
-        callback(null);
-        return;
+  if (!srcNode || !tgtNode) {
+    showToast('Error: node context lost');
+    callback(null);
+    return;
+  }
+
+  const payload = {
+    source: srcNode.subject?.name || srcNode.label,
+    kind,
+    target: tgtNode.subject?.name || tgtNode.label,
+  };
+
+  setLoading(true);
+  try {
+    const res = await fetch('/display/api/memory/relations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      showToast(`Relation established: ${kind}`);
+      callback(edgeData);
+      setTimeout(() => refreshGraph(), 500);
+    } else {
+      showToast('Failed to save relation');
+      callback(null);
     }
-
-    const payload = {
-        source: srcNode.subject?.name || srcNode.label,
-        kind: kind,
-        target: tgtNode.subject?.name || tgtNode.label
-    };
-
-    setLoading(true);
-    try {
-        const res = await fetch('/display/api/memory/relations', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (res.ok) {
-            showToast(`Link created: ${payload.kind || kind}`);
-            callback(edgeData);
-            // Wait a moment for backend sync before refreshing
-            setTimeout(() => refreshGraph(), 500);
-        } else {
-            showToast("Failed to save relation");
-            callback(null);
-        }
-    } catch (err) {
-        showToast("Relation request failed");
-        callback(null);
-    } finally {
-        setLoading(false);
-    }
+  } catch (err) {
+    showToast('Relation request failed');
+    callback(null);
+  } finally {
+    setLoading(false);
+  }
 }
 
 async function apiDeleteRelation(edge, callback) {
-    const srcNode = nodes.get(edge.from);
-    const tgtNode = nodes.get(edge.to);
-    const kind = edge.kind || edge.label;
+  const srcNode = nodes.get(edge.from);
+  const tgtNode = nodes.get(edge.to);
+  const kind    = edge.kind || edge.label;
 
-    setLoading(true);
-    try {
-        const url = `/display/api/memory/relations?source=${encodeURIComponent(srcNode.name)}&kind=${encodeURIComponent(kind)}&target=${encodeURIComponent(tgtNode.name)}`;
-        const res = await fetch(url, {
-            method: 'DELETE'
-        });
-        if (res.ok) {
-            showToast("Relation deleted");
-            callback();
-        } else {
-            showToast("Failed to delete relation");
-        }
-    } catch (err) {
-        showToast("Delete relation failed");
-    } finally {
-        setLoading(false);
+  setLoading(true);
+  try {
+    const url = `/display/api/memory/relations?source=${encodeURIComponent(srcNode?.subject?.name || srcNode?.label || '')}&kind=${encodeURIComponent(kind)}&target=${encodeURIComponent(tgtNode?.subject?.name || tgtNode?.label || '')}`;
+    const res = await fetch(url, { method: 'DELETE' });
+    if (res.ok) {
+      showToast('Relation removed');
+      callback();
+    } else {
+      showToast('Failed to delete relation');
     }
+  } catch (err) {
+    showToast('Delete relation failed');
+  } finally {
+    setLoading(false);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SIDEBAR
+   ═══════════════════════════════════════════════════════════ */
+function showDetails(jid) {
+  const node = nodes.get(jid);
+  if (!node) return;
+
+  selectedNodeJid = jid;
+  const s = node.subject || {};
+
+  document.getElementById('edit-jid').value         = jid;
+  document.getElementById('edit-name').value        = s.name         || '';
+  document.getElementById('edit-summary').value     = s.summary      || '';
+  document.getElementById('edit-description').value = s.description  || '';
+  document.getElementById('edit-type').value        = s.subject_type?.toLowerCase() || 'other';
+
+  document.getElementById('sb-mode').textContent  = 'Editing Subject';
+  document.getElementById('sb-title').textContent = s.name || 'Subject';
+  document.getElementById('save-btn').textContent  = 'Save Changes';
+  document.getElementById('delete-btn').textContent = 'Delete Subject';
+  document.getElementById('delete-btn').style.display = '';
+
+  document.getElementById('node-fields').style.display = '';
+  document.getElementById('edge-fields').style.display = 'none';
+  currentSidebarMode = 'node';
+
+  document.getElementById('sidebar').classList.add('open');
 }
 
 function createNewSubject() {
-    selectedNodeJid = null;
-    document.getElementById('edit-jid').value = '';
-    document.getElementById('edit-name').value = '';
-    document.getElementById('edit-summary').value = '';
-    document.getElementById('edit-description').value = '';
-    document.getElementById('edit-type').value = 'person';
+  closeFab();
+  selectedNodeJid = null;
 
-    document.getElementById('detail-title').innerText = "Create New Subject";
-    document.getElementById('sidebar').classList.remove('sidebar-hidden');
-    document.getElementById('save-btn').innerText = "Create Subject";
+  document.getElementById('edit-jid').value         = '';
+  document.getElementById('edit-name').value        = '';
+  document.getElementById('edit-summary').value     = '';
+  document.getElementById('edit-description').value = '';
+  document.getElementById('edit-type').value        = 'person';
 
-    if (network) network.unselectAll();
+  document.getElementById('sb-mode').textContent  = 'New Subject';
+  document.getElementById('sb-title').textContent = 'Untitled';
+  document.getElementById('save-btn').textContent  = 'Create Subject';
+  document.getElementById('delete-btn').style.display = 'none';
+
+  document.getElementById('node-fields').style.display = '';
+  document.getElementById('edge-fields').style.display = 'none';
+  currentSidebarMode = 'node';
+
+  document.getElementById('sidebar').classList.add('open');
+  if (network) network.unselectAll();
+
+  /* Focus the name field after the slide-in animation */
+  setTimeout(() => document.getElementById('edit-name').focus(), 380);
 }
 
-// --- Helpers ---
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  selectedNodeJid    = null;
+  selectedEdgeId     = null;
+  currentSidebarMode = 'node';
+  if (network) network.unselectAll();
+}
 
-function createNodeTooltip(subject) {
-    const container = document.createElement("div");
-    container.style.padding = "5px";
+/* ── Dispatch helpers ─────────────────────────────────────── */
+function saveDispatch() {
+  if (currentSidebarMode === 'edge')     saveEdge();
+  else if (currentSidebarMode === 'new-edge') saveNewRelation();
+  else saveSubject();
+}
 
-    const nameEl = document.createElement("strong");
-    nameEl.textContent = subject.name;
-    nameEl.style.color = TYPE_COLORS[subject.subject_type?.toLowerCase()] || TYPE_COLORS.other;
-    container.appendChild(nameEl);
+function deleteDispatch() {
+  if (currentSidebarMode === 'edge') deleteEdgeFromSidebar();
+  else deleteSubject();
+}
 
-    if (subject.summary) {
-        container.appendChild(document.createElement("br"));
-        const summaryEl = document.createElement("span");
-        summaryEl.textContent = subject.summary;
-        summaryEl.style.fontSize = "0.85rem";
-        summaryEl.style.color = "#94a3b8";
-        container.appendChild(summaryEl);
+/* ── Edge sidebar ─────────────────────────────────────────── */
+function showEdgeDetails(edgeId) {
+  const edge = edges.get(edgeId);
+  if (!edge) return;
+
+  const srcNode = nodes.get(edge.from);
+  const tgtNode = nodes.get(edge.to);
+  const srcName = srcNode?.subject?.name || srcNode?.label || '?';
+  const tgtName = tgtNode?.subject?.name || tgtNode?.label || '?';
+  const kind    = edge.kind || edge.label || '';
+
+  selectedEdgeId     = edgeId;
+  selectedNodeJid    = null;
+  currentSidebarMode = 'edge';
+
+  document.getElementById('edit-edge-id').value  = edgeId;
+  document.getElementById('edge-from-name').textContent = srcName;
+  document.getElementById('edge-to-name').textContent   = tgtName;
+
+  /* Pre-select the dropdown; fall back to 'other' for custom kinds */
+  const select   = document.getElementById('edge-kind');
+  const knownOpts = Array.from(select.options).map(o => o.value);
+  if (knownOpts.includes(kind)) {
+    select.value = kind;
+    document.getElementById('edge-custom-container').style.display = 'none';
+  } else {
+    select.value = 'other';
+    document.getElementById('edge-custom-container').style.display = 'block';
+    document.getElementById('edge-kind-custom').value = kind;
+  }
+
+  document.getElementById('sb-mode').textContent  = 'Editing Relation';
+  document.getElementById('sb-title').textContent = `${srcName} → ${tgtName}`;
+  document.getElementById('save-btn').textContent  = 'Save Changes';
+  document.getElementById('delete-btn').textContent = 'Delete Relation';
+  document.getElementById('delete-btn').style.display = '';
+
+  /* Swap visible panels */
+  document.getElementById('node-fields').style.display = 'none';
+  document.getElementById('edge-fields').style.display = '';
+
+  document.getElementById('sidebar').classList.add('open');
+}
+
+function toggleEdgeCustomKind(value) {
+  document.getElementById('edge-custom-container').style.display =
+    value === 'other' ? 'block' : 'none';
+}
+
+async function saveEdge() {
+  const edgeId = document.getElementById('edit-edge-id').value;
+  const edge   = edges.get(edgeId);
+  if (!edge) return;
+
+  let newKind = document.getElementById('edge-kind').value;
+  if (newKind === 'other') {
+    newKind = document.getElementById('edge-kind-custom').value.trim();
+  }
+  if (!newKind) { showToast('Relationship type is required'); return; }
+
+  const oldKind = edge.kind || edge.label;
+  if (newKind === oldKind) { closeSidebar(); return; }
+
+  setLoading(true);
+
+  /* Delete old relation then create the new one */
+  const srcNode = nodes.get(edge.from);
+  const tgtNode = nodes.get(edge.to);
+  const source  = srcNode?.subject?.name || srcNode?.label || '';
+  const target  = tgtNode?.subject?.name || tgtNode?.label || '';
+
+  try {
+    const delUrl = `/display/api/memory/relations?source=${encodeURIComponent(source)}&kind=${encodeURIComponent(oldKind)}&target=${encodeURIComponent(target)}`;
+    await fetch(delUrl, { method: 'DELETE' });
+
+    const res = await fetch('/display/api/memory/relations', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ source, kind: newKind, target }),
+    });
+
+    if (res.ok) {
+      showToast('Relation updated');
+      closeSidebar();
+      refreshGraph();
+    } else {
+      showToast('Failed to update relation');
+      setLoading(false);
     }
+  } catch (err) {
+    showToast('Update failed: ' + err.message);
+    setLoading(false);
+  }
+}
 
-    return container;
+function deleteEdgeFromSidebar() {
+  const edgeId = document.getElementById('edit-edge-id').value;
+  const edge   = edges.get(edgeId);
+  if (!edge) return;
+
+  if (confirm('Delete this relationship?')) {
+    apiDeleteRelation(edge, () => {
+      edges.remove(edgeId);
+      closeSidebar();
+      refreshGraph();
+    });
+  }
 }
 
 function deleteSubject() {
-    if (selectedNodeJid && confirm("Are you sure?")) {
-        apiDeleteSubject(selectedNodeJid, () => {
-            nodes.remove(selectedNodeJid);
-            closeSidebar();
-            refreshGraph();
-        });
-    }
+  if (selectedNodeJid && confirm('Permanently remove this subject from memory?')) {
+    apiDeleteSubject(selectedNodeJid, () => {
+      nodes.remove(selectedNodeJid);
+      closeSidebar();
+      refreshGraph();
+    });
+  }
 }
 
-// --- FAB Logic ---
-
+/* ═══════════════════════════════════════════════════════════
+   FAB
+   ═══════════════════════════════════════════════════════════ */
 function toggleFab() {
-    const container = document.getElementById('fab-container');
-    const mainBtn = document.getElementById('fab-main-btn');
-    container.classList.toggle('active');
-    mainBtn.classList.toggle('active');
+  document.getElementById('fab').classList.toggle('open');
+}
+
+function closeFab() {
+  document.getElementById('fab').classList.remove('open');
 }
 
 function startAddEdgeFlow() {
-    toggleFab(); // Close menu
-    if (network) {
-        network.addEdgeMode();
-        showToast("Drag between nodes to link them");
-    }
+  closeFab();
+  showNewRelationSidebar();
 }
 
-// --- Relation Modal ---
+function showNewRelationSidebar(prefillSource = '') {
+  selectedNodeJid    = null;
+  selectedEdgeId     = null;
+  currentSidebarMode = 'new-edge';
 
+  document.getElementById('new-rel-source').value = prefillSource;
+  document.getElementById('new-rel-target').value = '';
+  document.getElementById('new-rel-kind').value   = 'relates_to';
+  document.getElementById('new-rel-kind-custom').value = '';
+  document.getElementById('new-rel-custom-container').style.display = 'none';
+
+  document.getElementById('sb-mode').textContent   = 'New Relation';
+  document.getElementById('sb-title').textContent  = 'Connect Subjects';
+  document.getElementById('save-btn').textContent  = 'Establish Relation';
+  document.getElementById('delete-btn').style.display = 'none';
+
+  document.getElementById('node-fields').style.display     = 'none';
+  document.getElementById('edge-fields').style.display     = 'none';
+  document.getElementById('new-edge-fields').style.display = '';
+
+  document.getElementById('sidebar').classList.add('open');
+  if (network) network.unselectAll();
+  setTimeout(() => document.getElementById('new-rel-source').focus(), 380);
+}
+
+async function saveNewRelation() {
+  const source = document.getElementById('new-rel-source').value.trim();
+  const target = document.getElementById('new-rel-target').value.trim();
+  let kind     = document.getElementById('new-rel-kind').value;
+  if (kind === 'other') {
+    kind = document.getElementById('new-rel-kind-custom').value.trim();
+  }
+
+  if (!source || !target) { showToast('Source and target are required'); return; }
+  if (!kind)               { showToast('Relationship type is required'); return; }
+
+  setLoading(true);
+  try {
+    const res = await fetch('/display/api/memory/relations', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ source, kind, target }),
+    });
+    if (res.ok) {
+      showToast('Relation established');
+      closeSidebar();
+      refreshGraph();
+    } else {
+      showToast('Failed to create relation');
+      setLoading(false);
+    }
+  } catch (err) {
+    showToast('Request failed: ' + err.message);
+    setLoading(false);
+  }
+}
+
+function toggleNewRelCustomKind(value) {
+  document.getElementById('new-rel-custom-container').style.display =
+    value === 'other' ? 'block' : 'none';
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RELATION MODAL
+   ═══════════════════════════════════════════════════════════ */
 function showRelationModal(edgeData, callback) {
-    pendingEdgeData = edgeData;
-    pendingEdgeCallback = callback;
+  pendingEdgeData     = edgeData;
+  pendingEdgeCallback = callback;
 
-    // Reset modal
-    document.getElementById('rel-kind-select').value = 'relates_to';
-    document.getElementById('rel-kind-custom').value = '';
-    document.getElementById('custom-rel-container').style.display = 'none';
+  document.getElementById('rel-kind-select').value     = 'relates_to';
+  document.getElementById('rel-kind-custom').value     = '';
+  document.getElementById('custom-rel-container').style.display = 'none';
 
-    document.getElementById('relation-modal').style.display = 'flex';
+  document.getElementById('relation-modal').style.display = 'flex';
 }
 
 function toggleCustomRel(value) {
-    const customContainer = document.getElementById('custom-rel-container');
-    customContainer.style.display = (value === 'other') ? 'block' : 'none';
+  document.getElementById('custom-rel-container').style.display =
+    value === 'other' ? 'block' : 'none';
 }
 
 function closeRelationModal(success) {
-    document.getElementById('relation-modal').style.display = 'none';
+  document.getElementById('relation-modal').style.display = 'none';
 
-    if (success && pendingEdgeData && pendingEdgeCallback) {
-        let kind = document.getElementById('rel-kind-select').value;
-        if (kind === 'other') {
-            kind = document.getElementById('rel-kind-custom').value.trim();
-        }
-
-        if (kind) {
-            pendingEdgeData.label = kind;
-            saveRelation(pendingEdgeData, kind, pendingEdgeCallback);
-        } else {
-            showToast("Relation type required");
-            pendingEdgeCallback(null);
-        }
-    } else if (pendingEdgeCallback) {
-        pendingEdgeCallback(null);
+  if (success && pendingEdgeData && pendingEdgeCallback) {
+    let kind = document.getElementById('rel-kind-select').value;
+    if (kind === 'other') {
+      kind = document.getElementById('rel-kind-custom').value.trim();
     }
 
-    pendingEdgeData = null;
-    pendingEdgeCallback = null;
+    if (kind) {
+      pendingEdgeData.label = kind;
+      saveRelation(pendingEdgeData, kind, pendingEdgeCallback);
+    } else {
+      showToast('Relation type is required');
+      pendingEdgeCallback(null);
+    }
+  } else if (pendingEdgeCallback) {
+    pendingEdgeCallback(null);
+  }
+
+  pendingEdgeData     = null;
+  pendingEdgeCallback = null;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   UI UTILITIES
+   ═══════════════════════════════════════════════════════════ */
+function setLoading(active) {
+  document.getElementById('loading-overlay').style.display = active ? 'flex' : 'none';
+}
+
+function showToast(message) {
+  const container = document.getElementById('toast-container');
+  const toast     = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.transition = 'opacity 0.25s';
+    toast.style.opacity    = '0';
+    setTimeout(() => toast.remove(), 280);
+  }, 3000);
+}
+
+function buildTooltip(subject) {
+  const type = subject.subject_type?.toLowerCase() || 'other';
+  const meta = TYPE_META[type] || TYPE_META.other;
+
+  const el = document.createElement('div');
+  el.style.cssText = 'padding:4px 2px;min-width:140px;max-width:220px;';
+
+  const name = document.createElement('div');
+  name.textContent = subject.name;
+  name.style.cssText = `color:${meta.border};font-weight:500;margin-bottom:5px;font-size:0.85rem;`;
+  el.appendChild(name);
+
+  const typeTag = document.createElement('div');
+  typeTag.textContent = type.toUpperCase();
+  typeTag.style.cssText = `font-size:0.55rem;letter-spacing:0.12em;color:rgba(236,228,212,0.35);margin-bottom:6px;`;
+  el.appendChild(typeTag);
+
+  if (subject.summary) {
+    const summary = document.createElement('div');
+    summary.textContent = subject.summary;
+    summary.style.cssText = 'font-size:0.72rem;color:rgba(236,228,212,0.6);line-height:1.45;';
+    el.appendChild(summary);
+  }
+
+  return el;
 }

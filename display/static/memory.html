@@ -2,621 +2,992 @@
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tamashi | Memory Graph</title>
-    <!-- Relation Selection Modal -->
-    <div id="relation-modal" style="display: none;">
-        <div class="modal-content">
-            <h3>Establish Relationship</h3>
-            <div class="field">
-                <label>Relationship Type</label>
-                <select id="rel-kind-select" onchange="toggleCustomRel(this.value)">
-                    <option value="relates_to">Relates to</option>
-                    <option value="is_a">Is a (category/type)</option>
-                    <option value="works_at">Works at</option>
-                    <option value="lives_in">Lives in</option>
-                    <option value="member_of">Member of</option>
-                    <option value="loves">Loves / Likes</option>
-                    <option value="uses">Uses</option>
-                    <option value="owned_by">Owned by</option>
-                    <option value="other">Other (Custom...)</option>
-                </select>
-            </div>
-            <div id="custom-rel-container" class="field" style="display: none;">
-                <label>Custom Type</label>
-                <input type="text" id="rel-kind-custom" placeholder="e.g. rival_of">
-            </div>
-            <div class="modal-actions">
-                <button class="modal-btn secondary" onclick="closeRelationModal(false)">Cancel</button>
-                <button class="modal-btn primary" onclick="closeRelationModal(true)">Establish</button>
-            </div>
-        </div>
-    </div>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tamashi | Memory Cartography</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    /* ╔══════════════════════════════════════╗
+       ║         FOUNDATION & TOKENS          ║
+       ╚══════════════════════════════════════╝ */
+    :root {
+      --void:        #040410;
+      --void-2:      #07071a;
+      --panel:       rgba(6, 6, 20, 0.9);
+      --panel-solid: #0c0c20;
+      --gold:        #c9a84c;
+      --gold-bright: #e8c874;
+      --gold-dim:    rgba(201, 168, 76, 0.10);
+      --gold-border: rgba(201, 168, 76, 0.22);
+      --text:        #ece4d4;
+      --text-muted:  rgba(236, 228, 212, 0.45);
+      --text-faint:  rgba(236, 228, 212, 0.18);
+      --border:      rgba(201, 168, 76, 0.18);
+      --danger:      #e87c7c;
+      --success:     #7ce8a8;
+    }
 
-    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-    <style>
-        :root {
-            --bg-color: #0f172a;
-            --panel-bg: #1e293b;
-            --text-color: #f8fafc;
-            --accent-color: #38bdf8;
-            --border-color: #334155;
-            --danger-color: #ef4444;
-            --success-color: #22c55e;
-        }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        body,
-        html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            font-family: 'Inter', system-ui, -apple-system, sans-serif;
-            overflow: hidden;
-        }
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: var(--void);
+      color: var(--text);
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
+      font-weight: 300;
+    }
 
-        #graph-container {
-            width: 100%;
-            height: 100%;
-        }
+    /* ╔══════════════════════════════════════╗
+       ║            BACKGROUND                ║
+       ╚══════════════════════════════════════╝ */
+    #bg-canvas {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+    }
 
-        #sidebar {
-            position: absolute;
-            top: 1rem;
-            right: 1rem;
-            width: 320px;
-            max-width: calc(100vw - 2rem);
-            background: var(--panel-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
-            max-height: calc(100vh - 2rem - 60px);
-            overflow-y: auto;
-            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 1000;
-        }
+    /* Radial vignette over canvas */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      background: radial-gradient(ellipse at 50% 50%, transparent 40%, rgba(4,4,16,0.6) 100%);
+      pointer-events: none;
+    }
 
-        .sidebar-hidden {
-            transform: translateX(calc(100% + 2rem));
-        }
+    /* ╔══════════════════════════════════════╗
+       ║              GRAPH                   ║
+       ╚══════════════════════════════════════╝ */
+    #graph-container {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+    }
 
-        .close-btn {
-            position: absolute;
-            top: 10px;
-            right: 15px;
-            background: none;
-            border: none;
-            color: #64748b;
-            font-size: 1.5rem;
-            cursor: pointer;
-            padding: 5px;
-            line-height: 1;
-        }
+    /* ╔══════════════════════════════════════╗
+       ║             TOP BAR                  ║
+       ╚══════════════════════════════════════╝ */
+    #top-bar {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 60px;
+      background: linear-gradient(to bottom, rgba(4,4,16,0.97) 0%, rgba(4,4,16,0.0) 100%);
+      display: flex;
+      align-items: center;
+      padding: 0 28px;
+      gap: 20px;
+      z-index: 100;
+      pointer-events: none;
+    }
 
-        .close-btn:hover {
-            color: var(--text-color);
-        }
+    #top-bar > * { pointer-events: auto; }
 
-        /* Relation Modal */
-        #relation-modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.7);
-            z-index: 2000;
-            backdrop-filter: blur(4px);
-            align-items: center;
-            justify-content: center;
-        }
+    .brand {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 1.45rem;
+      font-weight: 300;
+      letter-spacing: 0.22em;
+      color: var(--gold);
+      text-transform: uppercase;
+      white-space: nowrap;
+      user-select: none;
+    }
 
-        .modal-content {
-            background: var(--panel-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            padding: 30px;
-            width: 400px;
-            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
-            animation: modalPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-        }
+    .brand em {
+      font-style: italic;
+      font-weight: 400;
+      letter-spacing: 0.25em;
+    }
 
-        @keyframes modalPop {
-            from {
-                transform: scale(0.9);
-                opacity: 0;
-            }
+    .top-rule {
+      width: 1px;
+      height: 22px;
+      background: var(--gold-border);
+      flex-shrink: 0;
+    }
 
-            to {
-                transform: scale(1);
-                opacity: 1;
-            }
-        }
+    .top-stat {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
 
-        .modal-content h3 {
-            margin-top: 0;
-            color: var(--text-color);
-        }
+    .top-stat-label {
+      font-size: 0.55rem;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--text-faint);
+    }
 
-        .modal-content .field {
-            margin-bottom: 20px;
-        }
+    .top-stat-value {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      letter-spacing: 0.06em;
+      transition: color 0.3s;
+    }
 
-        .modal-content label {
-            display: block;
-            margin-bottom: 8px;
-            font-size: 0.9rem;
-            color: #a0aec0;
-        }
+    .top-stat-value.loaded { color: var(--text); }
 
-        .modal-content select,
-        .modal-content input {
-            width: 100%;
-            padding: 12px;
-            background: #2d3748;
-            border: 1px solid #4a5568;
-            border-radius: 8px;
-            color: white;
-            font-size: 1rem;
-        }
+    .top-spacer { flex: 1; }
 
-        .modal-actions {
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-            margin-top: 20px;
-        }
+    .top-btn {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.62rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
 
-        .modal-btn {
-            padding: 10px 20px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 600;
-            border: none;
-            transition: all 0.2s;
-        }
+    .top-btn:hover {
+      border-color: rgba(201,168,76,0.5);
+      color: var(--gold);
+      background: var(--gold-dim);
+    }
 
-        .modal-btn.primary {
-            background: var(--accent-color);
-            color: white;
-        }
+    /* ╔══════════════════════════════════════╗
+       ║             LEGEND                   ║
+       ╚══════════════════════════════════════╝ */
+    #legend {
+      position: absolute;
+      bottom: 90px;
+      left: 24px;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      opacity: 0;
+      animation: fadeIn 1s ease 0.8s forwards;
+    }
 
-        .modal-btn.secondary {
-            background: #4a5568;
-            color: white;
-        }
+    @keyframes fadeIn {
+      to { opacity: 0.65; }
+    }
 
-        .modal-btn:hover {
-            opacity: 0.9;
-            transform: translateY(-1px);
-        }
+    #legend:hover { opacity: 1; transition: opacity 0.2s; }
 
-        h2 {
-            margin-top: 0;
-            font-size: 1.25rem;
-            color: var(--accent-color);
-        }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 0.58rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--text-muted);
+    }
 
-        h3 {
-            font-size: 0.9rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: #94a3b8;
-            margin: 20px 0 10px;
-        }
+    .legend-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      filter: blur(0.5px);
+    }
 
-        .form-group {
-            margin-bottom: 15px;
-        }
+    /* ╔══════════════════════════════════════╗
+       ║            ZOOM CONTROLS             ║
+       ╚══════════════════════════════════════╝ */
+    #zoom-controls {
+      position: absolute;
+      bottom: 24px;
+      left: 24px;
+      display: flex;
+      background: rgba(6,6,20,0.85);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+    }
 
-        label {
-            display: block;
-            font-size: 0.8rem;
-            margin-bottom: 5px;
-            color: #94a3b8;
-        }
+    .zoom-btn {
+      width: 36px; height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 1rem;
+      cursor: pointer;
+      border: none;
+      font-family: 'JetBrains Mono', monospace;
+      transition: all 0.15s;
+    }
 
-        input,
-        textarea,
-        select {
-            width: 100%;
-            padding: 10px;
-            background: #0f172a;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            color: white;
-            font-family: inherit;
-            box-sizing: border-box;
-        }
+    .zoom-btn:hover {
+      color: var(--gold);
+      background: var(--gold-dim);
+    }
 
-        textarea {
-            height: 100px;
-            resize: none;
-        }
+    .zoom-divider { width: 1px; background: var(--border); }
 
-        .button-group {
-            display: flex;
-            gap: 10px;
-            margin-top: 20px;
-        }
+    /* ╔══════════════════════════════════════╗
+       ║               FAB                    ║
+       ╚══════════════════════════════════════╝ */
+    #fab {
+      position: absolute;
+      bottom: 24px;
+      right: 24px;
+      z-index: 150;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+    }
 
-        button {
-            flex: 1;
-            padding: 10px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 600;
-            transition: opacity 0.2s;
-        }
+    .fab-options {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: flex-end;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
 
-        button:hover {
-            opacity: 0.9;
-        }
+    #fab.open .fab-options {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
 
-        .btn-primary {
-            background: var(--accent-color);
-            color: #0f172a;
-        }
+    .fab-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
 
-        .btn-danger {
-            background: var(--danger-color);
-            color: white;
-        }
+    .fab-row-label {
+      font-size: 0.6rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      background: rgba(4,4,16,0.92);
+      padding: 5px 11px;
+      border-radius: 2px;
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      backdrop-filter: blur(8px);
+    }
 
-        .btn-ghost {
-            background: transparent;
-            border: 1px solid var(--border-color);
-            color: var(--text-color);
-        }
+    .fab-sub-btn {
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      background: rgba(6,6,20,0.92);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      backdrop-filter: blur(8px);
+    }
 
-        /* FAB Button */
-        #fab-container {
-            position: absolute;
-            bottom: 30px;
-            right: 30px;
-            display: flex;
-            flex-direction: column-reverse;
-            align-items: center;
-            gap: 15px;
-            z-index: 1500;
-        }
+    .fab-sub-btn:hover {
+      border-color: var(--gold);
+      color: var(--gold);
+      box-shadow: 0 0 16px rgba(201,168,76,0.2);
+    }
 
-        .fab-main {
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
-            background: var(--accent-color);
-            color: #0f172a;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 2rem;
-            cursor: pointer;
-            box-shadow: 0 10px 30px rgba(56, 189, 248, 0.4);
-            border: none;
-            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
+    .fab-main {
+      width: 50px; height: 50px;
+      border-radius: 50%;
+      background: var(--gold);
+      color: var(--void);
+      border: none;
+      font-size: 1.6rem;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 0 28px rgba(201,168,76,0.3), 0 4px 20px rgba(0,0,0,0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
 
-        .fab-main.active {
-            transform: rotate(45deg);
-            background: #475569;
-            color: white;
-            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
-        }
+    .fab-main:hover {
+      transform: scale(1.08);
+      box-shadow: 0 0 40px rgba(201,168,76,0.45), 0 4px 24px rgba(0,0,0,0.5);
+    }
 
-        .fab-sub {
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            background: var(--panel-bg);
-            border: 1px solid var(--border-color);
-            color: var(--text-color);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-            opacity: 0;
-            transform: translateY(20px) scale(0.8);
-            visibility: hidden;
-            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            position: relative;
-        }
+    #fab.open .fab-main {
+      transform: rotate(45deg);
+      background: rgba(201,168,76,0.12);
+      border: 1px solid var(--gold-border);
+      color: var(--gold);
+      box-shadow: none;
+    }
 
-        #fab-container.active .fab-sub {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-            visibility: visible;
-        }
+    /* ╔══════════════════════════════════════╗
+       ║            SIDEBAR                   ║
+       ╚══════════════════════════════════════╝ */
+    #sidebar {
+      position: absolute;
+      top: 0; right: 0;
+      width: 360px;
+      height: 100%;
+      background: var(--panel);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border-left: 1px solid var(--border);
+      z-index: 200;
+      transform: translateX(100%);
+      transition: transform 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
 
-        .fab-label {
-            position: absolute;
-            right: 100%;
-            margin-right: 15px;
-            background: rgba(15, 23, 42, 0.9);
-            padding: 4px 12px;
-            border-radius: 6px;
-            font-size: 0.8rem;
-            white-space: nowrap;
-            opacity: 0;
-            transition: opacity 0.2s;
-            pointer-events: none;
-            border: 1px solid var(--border-color);
-        }
+    #sidebar.open {
+      transform: translateX(0);
+    }
 
-        .fab-sub:hover .fab-label {
-            opacity: 1;
-        }
+    /* Decorative top accent line */
+    #sidebar::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(to right, transparent, var(--gold), transparent);
+      opacity: 0.6;
+    }
 
-        .fab-sub:hover {
-            background: var(--bg-color);
-            border-color: var(--accent-color);
-        }
+    .sb-header {
+      padding: 32px 28px 22px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      position: relative;
+    }
 
-        #controls {
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            display: flex;
-            gap: 10px;
-            z-index: 100;
-        }
+    .sb-eyebrow {
+      font-size: 0.58rem;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--gold);
+      margin-bottom: 10px;
+    }
 
-        .shortcut-hint {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            font-size: 0.75rem;
-            color: #64748b;
-            pointer-events: none;
-        }
+    .sb-title {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 1.7rem;
+      font-weight: 400;
+      line-height: 1.15;
+      color: var(--text);
+      word-break: break-word;
+    }
 
-        /* Toast Notifications */
-        #toast-container {
-            position: absolute;
-            bottom: 80px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            z-index: 1000;
-        }
+    .sb-close {
+      position: absolute;
+      top: 22px; right: 22px;
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
 
-        .toast {
-            background: var(--panel-bg);
-            border-left: 4px solid var(--accent-color);
-            padding: 12px 24px;
-            border-radius: 4px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-            animation: slideUp 0.3s ease-out;
-        }
+    .sb-close:hover { border-color: var(--gold); color: var(--gold); }
 
-        @keyframes slideUp {
-            from {
-                transform: translateY(20px);
-                opacity: 0;
-            }
+    .sb-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 26px 28px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
 
-            to {
-                transform: translateY(0);
-                opacity: 1;
-            }
-        }
+    .sb-body::-webkit-scrollbar { width: 3px; }
+    .sb-body::-webkit-scrollbar-track { background: transparent; }
+    .sb-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
-        /* Loading Spinner */
-        #loading-overlay {
-            position: absolute;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(30, 41, 59, 0.8);
-            padding: 8px 16px;
-            border-radius: 20px;
-            display: none;
-            align-items: center;
-            gap: 10px;
-            z-index: 1000;
-            border: 1px solid var(--border-color);
-        }
+    .form-field { margin-bottom: 22px; }
 
-        .spinner {
-            width: 16px;
-            height: 16px;
-            border: 2px solid var(--accent-color);
-            border-top-color: transparent;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
+    .edge-readonly {
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      letter-spacing: 0.02em;
+      font-style: italic;
+    }
 
-        @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
+    .form-label {
+      display: block;
+      font-size: 0.57rem;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--text-faint);
+      margin-bottom: 9px;
+    }
 
-        /* Empty State */
-        #empty-state {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            text-align: center;
-            display: none;
-            color: #64748b;
-        }
+    .form-input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      font-weight: 300;
+      padding: 8px 0;
+      outline: none;
+      transition: border-color 0.2s;
+      letter-spacing: 0.02em;
+    }
 
-        /* Custom Zoom Controls */
-        #zoom-controls {
-            position: absolute;
-            bottom: 20px;
-            right: 20px;
-            display: flex;
-            background: var(--panel-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            overflow: hidden;
-            z-index: 100;
-        }
+    .form-input:focus { border-bottom-color: var(--gold); }
+    .form-input::placeholder { color: var(--text-faint); }
 
-        .zoom-btn {
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: transparent;
-            color: var(--text-color);
-            font-size: 1.25rem;
-            cursor: pointer;
-            border: none;
-        }
+    .form-select {
+      width: 100%;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      font-weight: 300;
+      padding: 8px 0;
+      outline: none;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='rgba(201,168,76,0.45)' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 2px center;
+      transition: border-color 0.2s;
+    }
 
-        .zoom-btn:hover {
-            background: var(--bg-color);
-        }
+    .form-select:focus { border-bottom-color: var(--gold); }
+    .form-select option { background: var(--panel-solid); color: var(--text); }
 
-        .zoom-divider {
-            width: 1px;
-            background: var(--border-color);
-        }
+    .form-textarea {
+      width: 100%;
+      background: rgba(201,168,76,0.025);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.77rem;
+      font-weight: 300;
+      padding: 11px 13px;
+      outline: none;
+      resize: none;
+      height: 130px;
+      line-height: 1.65;
+      transition: border-color 0.2s;
+      letter-spacing: 0.01em;
+    }
 
-        /* Vis.js Customizations */
-        .vis-network:focus {
-            outline: none;
-        }
+    .form-textarea:focus { border-color: var(--gold); }
+    .form-textarea::placeholder { color: var(--text-faint); }
 
-        .vis-manipulation {
-            background: var(--panel-bg) !important;
-            border-top: 1px solid var(--border-color) !important;
-            height: 45px !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-        }
+    .sb-footer {
+      padding: 18px 28px 26px;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
 
-        .vis-button {
-            background: transparent !important;
-            color: var(--text-color) !important;
-            border-radius: 4px !important;
-            padding: 4px 8px !important;
-            margin: 0 5px !important;
-            height: auto !important;
-        }
+    /* ╔══════════════════════════════════════╗
+       ║             BUTTONS                  ║
+       ╚══════════════════════════════════════╝ */
+    .btn {
+      width: 100%;
+      padding: 11px 16px;
+      border-radius: 2px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.65rem;
+      font-weight: 400;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      cursor: pointer;
+      border: none;
+      transition: all 0.18s;
+    }
 
-        .vis-button:hover {
-            background: var(--accent-color) !important;
-            color: var(--bg-color) !important;
-        }
+    .btn-gold {
+      background: var(--gold);
+      color: var(--void);
+    }
 
-        .vis-edit-mode {
-            background: var(--accent-color) !important;
-            color: var(--bg-color) !important;
-        }
+    .btn-gold:hover { background: var(--gold-bright); }
 
-        /* Hide redundant buttons */
-        .vis-button.vis-edit {
-            display: none !important;
-        }
-    </style>
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .btn-ghost:hover { border-color: var(--text-muted); color: var(--text); }
+
+    .btn-danger {
+      background: transparent;
+      border: 1px solid rgba(232,124,124,0.25);
+      color: rgba(232,124,124,0.6);
+    }
+
+    .btn-danger:hover {
+      background: rgba(232,124,124,0.08);
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+
+    /* ╔══════════════════════════════════════╗
+       ║              MODAL                   ║
+       ╚══════════════════════════════════════╝ */
+    #relation-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(4,4,16,0.82);
+      backdrop-filter: blur(10px);
+      z-index: 400;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-box {
+      background: var(--panel-solid);
+      border: 1px solid var(--gold-border);
+      border-radius: 4px;
+      width: 440px;
+      max-width: calc(100vw - 48px);
+      overflow: hidden;
+      animation: modalIn 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    @keyframes modalIn {
+      from { transform: scale(0.93) translateY(8px); opacity: 0; }
+      to   { transform: scale(1) translateY(0); opacity: 1; }
+    }
+
+    /* Decorative top stripe */
+    .modal-box::before {
+      content: '';
+      display: block;
+      height: 2px;
+      background: linear-gradient(to right, transparent, var(--gold), transparent);
+      opacity: 0.5;
+    }
+
+    .modal-header {
+      padding: 22px 28px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .modal-eyebrow {
+      font-size: 0.58rem;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--gold);
+      margin-bottom: 6px;
+    }
+
+    .modal-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.4rem;
+      font-weight: 400;
+      color: var(--text);
+    }
+
+    .modal-body { padding: 22px 28px 10px; }
+
+    .modal-footer {
+      padding: 14px 28px 24px;
+      display: flex;
+      gap: 10px;
+    }
+
+    .modal-footer .btn { flex: 1; }
+
+    /* ╔══════════════════════════════════════╗
+       ║           NOTIFICATIONS              ║
+       ╚══════════════════════════════════════╝ */
+    #toast-container {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 500;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      align-items: center;
+      pointer-events: none;
+    }
+
+    .toast {
+      background: rgba(6,6,20,0.96);
+      border: 1px solid var(--gold-border);
+      color: var(--text-muted);
+      font-size: 0.68rem;
+      letter-spacing: 0.07em;
+      padding: 9px 20px;
+      border-radius: 2px;
+      animation: toastIn 0.22s ease-out;
+      backdrop-filter: blur(12px);
+      white-space: nowrap;
+    }
+
+    @keyframes toastIn {
+      from { transform: translateY(8px); opacity: 0; }
+      to   { transform: translateY(0); opacity: 1; }
+    }
+
+    /* ╔══════════════════════════════════════╗
+       ║         LOADING INDICATOR            ║
+       ╚══════════════════════════════════════╝ */
+    #loading-overlay {
+      position: fixed;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(6,6,20,0.92);
+      border: 1px solid var(--border);
+      padding: 7px 18px;
+      border-radius: 2px;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      z-index: 300;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--text-muted);
+      backdrop-filter: blur(10px);
+    }
+
+    .spinner {
+      width: 11px; height: 11px;
+      border: 1.5px solid rgba(201,168,76,0.25);
+      border-top-color: var(--gold);
+      border-radius: 50%;
+      animation: spin 0.65s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ╔══════════════════════════════════════╗
+       ║            EMPTY STATE               ║
+       ╚══════════════════════════════════════╝ */
+    #empty-state {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      display: none;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .empty-kanji {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 6rem;
+      font-weight: 300;
+      color: var(--gold);
+      opacity: 0.08;
+      line-height: 1;
+      animation: pulse 4s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.08; }
+      50%       { opacity: 0.13; }
+    }
+
+    .empty-title {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 1.35rem;
+      font-weight: 300;
+      font-style: italic;
+      color: rgba(236,228,212,0.3);
+      margin-top: 18px;
+      letter-spacing: 0.04em;
+    }
+
+    .empty-hint {
+      font-size: 0.58rem;
+      color: rgba(236,228,212,0.15);
+      margin-top: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+    }
+
+    /* ╔══════════════════════════════════════╗
+       ║         VIS.JS OVERRIDES             ║
+       ╚══════════════════════════════════════╝ */
+    .vis-network:focus { outline: none; }
+
+    .vis-tooltip {
+      background: rgba(6,6,20,0.96) !important;
+      border: 1px solid var(--gold-border) !important;
+      color: var(--text) !important;
+      font-family: 'JetBrains Mono', monospace !important;
+      font-size: 0.72rem !important;
+      border-radius: 3px !important;
+      padding: 9px 13px !important;
+      backdrop-filter: blur(10px) !important;
+      line-height: 1.5 !important;
+    }
+
+    .vis-manipulation {
+      display: none !important;
+    }
+
+    /* vis-button styles unused — toolbar hidden */
+  </style>
 </head>
 
 <body>
-    <div class="shortcut-hint">Drag nodes to move • Select to edit • Toggle Edit Mode to add edges</div>
+  <canvas id="bg-canvas"></canvas>
+  <div id="graph-container"></div>
 
-    <div id="loading-overlay">
-        <div class="spinner"></div>
-        <span style="font-size: 0.8rem;">Syncing memory...</span>
+  <!-- ── TOP BAR ── -->
+  <div id="top-bar">
+    <div class="brand">Tama<em>shi</em></div>
+    <div class="top-rule"></div>
+    <div class="top-stat">
+      <span class="top-stat-label">Subjects</span>
+      <span class="top-stat-value" id="stat-subjects">—</span>
     </div>
-
-    <div id="toast-container"></div>
-
-    <div id="empty-state">
-        <div style="font-size: 3rem; margin-bottom: 20px;">🧠</div>
-        <div style="font-size: 1.2rem;">Your memory graph is empty</div>
-        <div style="margin-top: 10px;">Click <b>+ New Subject</b> to start mapping your thoughts.</div>
+    <div class="top-stat">
+      <span class="top-stat-label">Relations</span>
+      <span class="top-stat-value" id="stat-relations">—</span>
     </div>
+    <div class="top-spacer"></div>
+    <button class="top-btn" onclick="refreshGraph()">↺ Refresh</button>
+    <button class="top-btn" onclick="window.location.href='/display/'">← Dashboard</button>
+  </div>
 
-    <div id="graph-container"></div>
+  <!-- ── TYPE LEGEND ── -->
+  <div id="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#e87c8a;box-shadow:0 0 5px #e87c8a"></div>Person</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7cb4e8;box-shadow:0 0 5px #7cb4e8"></div>Concept</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7ce8a8;box-shadow:0 0 5px #7ce8a8"></div>Goal</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#e8c87c;box-shadow:0 0 5px #e8c87c"></div>Event</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#b47ce8;box-shadow:0 0 5px #b47ce8"></div>Place</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#e87cb4;box-shadow:0 0 5px #e87cb4"></div>Object</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#7090a4;box-shadow:0 0 5px #7090a4"></div>Other</div>
+  </div>
 
-    <div id="zoom-controls">
-        <button class="zoom-btn" onclick="network.moveTo({scale: network.getScale() * 1.2})">+</button>
-        <div class="zoom-divider"></div>
-        <button class="zoom-btn" onclick="network.moveTo({scale: network.getScale() / 1.2})">−</button>
-        <div class="zoom-divider"></div>
-        <button class="zoom-btn" onclick="network.fit()">⛶</button>
+  <!-- ── ZOOM CONTROLS ── -->
+  <div id="zoom-controls">
+    <button class="zoom-btn" onclick="network.moveTo({scale: network.getScale() * 1.25})">+</button>
+    <div class="zoom-divider"></div>
+    <button class="zoom-btn" onclick="network.moveTo({scale: network.getScale() / 1.25})">−</button>
+    <div class="zoom-divider"></div>
+    <button class="zoom-btn" title="Fit all" onclick="network.fit()">⛶</button>
+  </div>
+
+  <!-- ── LOADING ── -->
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <span>Synchronizing memory</span>
+  </div>
+
+  <!-- ── EMPTY STATE ── -->
+  <div id="empty-state">
+    <div class="empty-kanji">魂</div>
+    <div class="empty-title">The memory graph awaits</div>
+    <div class="empty-hint">Press + to chart the first subject of knowledge</div>
+  </div>
+
+  <!-- ── TOASTS ── -->
+  <div id="toast-container"></div>
+
+  <!-- ── SIDEBAR ── -->
+  <div id="sidebar">
+    <div class="sb-header">
+      <div class="sb-eyebrow" id="sb-mode">Subject Details</div>
+      <div class="sb-title" id="sb-title">—</div>
+      <button class="sb-close" onclick="closeSidebar()">✕</button>
     </div>
+    <div class="sb-body">
+      <!-- Node fields -->
+      <div id="node-fields">
+        <input type="hidden" id="edit-jid">
 
-    <div id="sidebar" class="sidebar-hidden">
-        <button class="close-btn" onclick="closeSidebar()">&times;</button>
-        <h2 id="detail-title">Subject Details</h2>
-
-        <div id="edit-form">
-            <input type="hidden" id="edit-jid">
-
-            <div class="form-group">
-                <label for="edit-name">Name</label>
-                <input type="text" id="edit-name" placeholder="e.g. Satoshi Nakamoto">
-            </div>
-
-            <div class="form-group">
-                <label for="edit-type">Type</label>
-                <select id="edit-type">
-                    <option value="person">Person</option>
-                    <option value="concept">Concept</option>
-                    <option value="goal">Goal</option>
-                    <option value="event">Event</option>
-                    <option value="place">Place</option>
-                    <option value="object">Object</option>
-                    <option value="other">Other</option>
-                </select>
-            </div>
-
-            <div class="form-group">
-                <label for="edit-summary">Summary (One-liner)</label>
-                <input type="text" id="edit-summary" placeholder="Brief gist of this subject">
-            </div>
-
-            <div class="form-group">
-                <label for="edit-description">Description (Full context)</label>
-                <textarea id="edit-description" placeholder="Everything the agent knows about this..."></textarea>
-            </div>
-
-            <div class="button-group">
-                <button id="save-btn" class="btn-primary" onclick="saveSubject()">Save Changes</button>
-                <button class="btn-ghost" onclick="closeSidebar()">Cancel</button>
-            </div>
-
-            <div class="button-group" style="margin-top: 10px;">
-                <button id="delete-btn" class="btn-danger" onclick="deleteSubject()">Delete Subject</button>
-            </div>
+        <div class="form-field">
+          <label class="form-label">Name</label>
+          <input type="text" class="form-input" id="edit-name" placeholder="Entity name">
         </div>
-    </div>
 
-    <div id="fab-container">
-        <div class="fab-sub" onclick="startAddEdgeFlow()">
-            <span class="fab-label">New Relation</span>
-            <span style="font-size: 1.2rem;">🔗</span>
+        <div class="form-field">
+          <label class="form-label">Type</label>
+          <select class="form-select" id="edit-type">
+            <option value="person">Person</option>
+            <option value="concept">Concept</option>
+            <option value="goal">Goal</option>
+            <option value="event">Event</option>
+            <option value="place">Place</option>
+            <option value="object">Object</option>
+            <option value="other">Other</option>
+          </select>
         </div>
-        <div class="fab-sub" onclick="createNewSubject()">
-            <span class="fab-label">New Subject</span>
-            <span style="font-size: 1.2rem;">🧠</span>
+
+        <div class="form-field">
+          <label class="form-label">Summary</label>
+          <input type="text" class="form-input" id="edit-summary" placeholder="One-line identity">
         </div>
-        <button class="fab-main" id="fab-main-btn" onclick="toggleFab()">+</button>
-    </div>
 
-    <div id="controls">
-        <button class="btn-ghost" onclick="refreshGraph()">Refresh</button>
-        <button class="btn-ghost" onclick="window.location.href='/display/'">Back to Dashboard</button>
-    </div>
+        <div class="form-field">
+          <label class="form-label">Description</label>
+          <textarea class="form-textarea" id="edit-description" placeholder="Full context and knowledge..."></textarea>
+        </div>
+      </div>
 
-    <script src="/display/static/memory.js"></script>
+      <!-- New relation fields -->
+      <div id="new-edge-fields" style="display:none">
+        <datalist id="subjects-list"></datalist>
+
+        <div class="form-field">
+          <label class="form-label">From</label>
+          <input type="text" class="form-input" id="new-rel-source"
+                 list="subjects-list" placeholder="Subject name" autocomplete="off">
+        </div>
+
+        <div class="form-field">
+          <label class="form-label">To</label>
+          <input type="text" class="form-input" id="new-rel-target"
+                 list="subjects-list" placeholder="Subject name" autocomplete="off">
+        </div>
+
+        <div class="form-field">
+          <label class="form-label">Relationship Type</label>
+          <select class="form-select" id="new-rel-kind" onchange="toggleNewRelCustomKind(this.value)">
+            <option value="relates_to">Relates to</option>
+            <option value="is_a">Is a (category / type)</option>
+            <option value="works_at">Works at</option>
+            <option value="lives_in">Lives in</option>
+            <option value="member_of">Member of</option>
+            <option value="loves">Loves / Likes</option>
+            <option value="uses">Uses</option>
+            <option value="owned_by">Owned by</option>
+            <option value="other">Other (Custom)</option>
+          </select>
+        </div>
+
+        <div id="new-rel-custom-container" class="form-field" style="display:none">
+          <label class="form-label">Custom Type</label>
+          <input type="text" class="form-input" id="new-rel-kind-custom" placeholder="e.g. rival_of">
+        </div>
+      </div>
+
+      <!-- Edge fields -->
+      <div id="edge-fields" style="display:none">
+        <input type="hidden" id="edit-edge-id">
+
+        <div class="form-field">
+          <label class="form-label">From</label>
+          <div class="edge-readonly" id="edge-from-name">—</div>
+        </div>
+
+        <div class="form-field">
+          <label class="form-label">To</label>
+          <div class="edge-readonly" id="edge-to-name">—</div>
+        </div>
+
+        <div class="form-field">
+          <label class="form-label">Relationship Type</label>
+          <select class="form-select" id="edge-kind" onchange="toggleEdgeCustomKind(this.value)">
+            <option value="relates_to">Relates to</option>
+            <option value="is_a">Is a (category / type)</option>
+            <option value="works_at">Works at</option>
+            <option value="lives_in">Lives in</option>
+            <option value="member_of">Member of</option>
+            <option value="loves">Loves / Likes</option>
+            <option value="uses">Uses</option>
+            <option value="owned_by">Owned by</option>
+            <option value="other">Other (Custom)</option>
+          </select>
+        </div>
+
+        <div id="edge-custom-container" class="form-field" style="display:none">
+          <label class="form-label">Custom Type</label>
+          <input type="text" class="form-input" id="edge-kind-custom" placeholder="e.g. rival_of">
+        </div>
+      </div>
+    </div>
+    <div class="sb-footer">
+      <button class="btn btn-gold" id="save-btn" onclick="saveDispatch()">Save Changes</button>
+      <button class="btn btn-ghost" onclick="closeSidebar()">Cancel</button>
+      <button class="btn btn-danger" id="delete-btn" onclick="deleteDispatch()">Delete Subject</button>
+    </div>
+  </div>
+
+  <!-- ── FAB ── -->
+  <div id="fab">
+    <div class="fab-options">
+      <div class="fab-row">
+        <span class="fab-row-label">New Relation</span>
+        <button class="fab-sub-btn" onclick="startAddEdgeFlow()" title="Draw a new relation">⟶</button>
+      </div>
+      <div class="fab-row">
+        <span class="fab-row-label">New Subject</span>
+        <button class="fab-sub-btn" onclick="createNewSubject()" title="Create a new subject">✦</button>
+      </div>
+    </div>
+    <button class="fab-main" id="fab-main-btn" onclick="toggleFab()">+</button>
+  </div>
+
+  <!-- ── RELATION MODAL ── -->
+  <div id="relation-modal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div class="modal-eyebrow">Establish Connection</div>
+        <div class="modal-title">Define Relationship</div>
+      </div>
+      <div class="modal-body">
+        <div class="form-field">
+          <label class="form-label">Relationship Type</label>
+          <select class="form-select" id="rel-kind-select" onchange="toggleCustomRel(this.value)">
+            <option value="relates_to">Relates to</option>
+            <option value="is_a">Is a (category / type)</option>
+            <option value="works_at">Works at</option>
+            <option value="lives_in">Lives in</option>
+            <option value="member_of">Member of</option>
+            <option value="loves">Loves / Likes</option>
+            <option value="uses">Uses</option>
+            <option value="owned_by">Owned by</option>
+            <option value="other">Other (Custom)</option>
+          </select>
+        </div>
+        <div id="custom-rel-container" class="form-field" style="display:none">
+          <label class="form-label">Custom Type</label>
+          <input type="text" class="form-input" id="rel-kind-custom" placeholder="e.g. rival_of">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeRelationModal(false)">Cancel</button>
+        <button class="btn btn-gold" onclick="closeRelationModal(true)">Establish</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/display/static/memory.js"></script>
 </body>
 
 </html>
