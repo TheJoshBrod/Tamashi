@@ -3,24 +3,24 @@
    ═══════════════════════════════════════════════════════════ */
 
 let network = null;
-let nodes   = new vis.DataSet([]);
-let edges   = new vis.DataSet([]);
-let selectedNodeJid    = null;
-let selectedEdgeId     = null;
+let nodes = new vis.DataSet([]);
+let edges = new vis.DataSet([]);
+let selectedNodeJid = null;
+let selectedEdgeId = null;
 let currentSidebarMode = 'node'; // 'node' | 'edge'
-let pendingEdgeData    = null;
+let pendingEdgeData = null;
 let pendingEdgeCallback = null;
-let physicsEnabled     = true;
+let physicsEnabled = true;
 
 /* ── Type styling ─────────────────────────────────────────── */
 const TYPE_META = {
-  person:  { border: '#e87c8a', bg: '#1a0c10', shadow: 'rgba(232,124,138,0.55)' },
+  person: { border: '#e87c8a', bg: '#1a0c10', shadow: 'rgba(232,124,138,0.55)' },
   concept: { border: '#7cb4e8', bg: '#0c1220', shadow: 'rgba(124,180,232,0.55)' },
-  goal:    { border: '#7ce8a8', bg: '#0c1a14', shadow: 'rgba(124,232,168,0.55)' },
-  event:   { border: '#e8c87c', bg: '#1a1510', shadow: 'rgba(232,200,124,0.55)' },
-  place:   { border: '#b47ce8', bg: '#100c1a', shadow: 'rgba(180,124,232,0.55)' },
-  object:  { border: '#e87cb4', bg: '#1a0c15', shadow: 'rgba(232,124,180,0.55)' },
-  other:   { border: '#7090a4', bg: '#0c0e14', shadow: 'rgba(112,144,164,0.45)' },
+  goal: { border: '#7ce8a8', bg: '#0c1a14', shadow: 'rgba(124,232,168,0.55)' },
+  event: { border: '#e8c87c', bg: '#1a1510', shadow: 'rgba(232,200,124,0.55)' },
+  place: { border: '#b47ce8', bg: '#100c1a', shadow: 'rgba(180,124,232,0.55)' },
+  object: { border: '#e87cb4', bg: '#1a0c15', shadow: 'rgba(232,124,180,0.55)' },
+  other: { border: '#7090a4', bg: '#0c0e14', shadow: 'rgba(112,144,164,0.45)' },
 };
 
 /* ── Bootstrap ────────────────────────────────────────────── */
@@ -44,24 +44,24 @@ document.addEventListener('DOMContentLoaded', () => {
    ═══════════════════════════════════════════════════════════ */
 function initBackground() {
   const canvas = document.getElementById('bg-canvas');
-  const ctx    = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d');
   const CONNECT_DIST = 110;
   const COUNT = 70;
 
   function resize() {
-    canvas.width  = window.innerWidth;
+    canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
   }
   resize();
   window.addEventListener('resize', resize);
 
   const particles = Array.from({ length: COUNT }, () => ({
-    x:  Math.random() * canvas.width,
-    y:  Math.random() * canvas.height,
+    x: Math.random() * canvas.width,
+    y: Math.random() * canvas.height,
     vx: (Math.random() - 0.5) * 0.12,
     vy: (Math.random() - 0.5) * 0.12,
-    r:  Math.random() * 1.2 + 0.4,
-    o:  Math.random() * 0.35 + 0.08,
+    r: Math.random() * 1.2 + 0.4,
+    o: Math.random() * 0.35 + 0.08,
   }));
 
   function frame() {
@@ -70,8 +70,8 @@ function initBackground() {
     /* connections */
     for (let i = 0; i < COUNT; i++) {
       for (let j = i + 1; j < COUNT; j++) {
-        const dx   = particles[i].x - particles[j].x;
-        const dy   = particles[i].y - particles[j].y;
+        const dx = particles[i].x - particles[j].x;
+        const dy = particles[i].y - particles[j].y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < CONNECT_DIST) {
           const a = (1 - dist / CONNECT_DIST) * 0.07;
@@ -79,7 +79,7 @@ function initBackground() {
           ctx.moveTo(particles[i].x, particles[i].y);
           ctx.lineTo(particles[j].x, particles[j].y);
           ctx.strokeStyle = `rgba(201,168,76,${a})`;
-          ctx.lineWidth   = 0.5;
+          ctx.lineWidth = 0.5;
           ctx.stroke();
         }
       }
@@ -95,9 +95,9 @@ function initBackground() {
       /* drift & wrap */
       p.x += p.vx;
       p.y += p.vy;
-      if (p.x < 0)             p.x = canvas.width;
-      if (p.x > canvas.width)  p.x = 0;
-      if (p.y < 0)             p.y = canvas.height;
+      if (p.x < 0) p.x = canvas.width;
+      if (p.x > canvas.width) p.x = 0;
+      if (p.y < 0) p.y = canvas.height;
       if (p.y > canvas.height) p.y = 0;
     });
 
@@ -125,42 +125,42 @@ function initGraph() {
         strokeColor: '#040410',
       },
       borderWidth: 2,
-      shadow: { enabled: true, size: 18, x: 0, y: 0 },
+      shadow: { enabled: false }, // Disabled: massive performance impact during zoom
       scaling: { label: { enabled: true, min: 12, max: 22 } },
     },
     edges: {
       width: 1.4,
       color: {
-        color:     'rgba(201,168,76,0.18)',
+        color: 'rgba(201,168,76,0.18)',
         highlight: 'rgba(201,168,76,0.75)',
-        hover:     'rgba(201,168,76,0.45)',
+        hover: 'rgba(201,168,76,0.45)',
       },
       arrows: { to: { enabled: true, scaleFactor: 0.38 } },
       font: {
-        size:        10,
-        color:       'rgba(201,168,76,0.55)',
-        face:        '"JetBrains Mono", monospace',
-        align:       'middle',
+        size: 10,
+        color: 'rgba(201,168,76,0.55)',
+        face: '"JetBrains Mono", monospace',
+        align: 'middle',
         strokeWidth: 3,
         strokeColor: '#040410',
       },
-      smooth: { type: 'continuous', roundness: 0.15 },
+      smooth: { type: 'dynamic', roundness: 0.15 }, // use 'dynamic' for performance
     },
     physics: {
       enabled: true,
       solver: 'forceAtlas2Based',
       forceAtlas2Based: {
         gravitationalConstant: -50,
-        centralGravity:        0.01,
-        springConstant:        0.08,
-        springLength:          100,
-        damping:               0.4,
-        avoidOverlap:          0,
+        centralGravity: 0.01,
+        springConstant: 0.08,
+        springLength: 100,
+        damping: 0.4,
+        avoidOverlap: 0,
       },
       maxVelocity: 45,
       stabilization: {
-        enabled:        true,
-        iterations:     200,
+        enabled: true,
+        iterations: 200,
         updateInterval: 50,
       },
     },
@@ -169,6 +169,7 @@ function initGraph() {
       multiselect: false,
       navigationButtons: false,
       tooltipDelay: 200,
+      hideEdgesOnDrag: true, // drastically improves drag performance on large webs
     },
     manipulation: {
       enabled: true,
@@ -215,23 +216,23 @@ function initGraph() {
 async function refreshGraph({ focusName } = {}) {
   setLoading(true);
   try {
-    const res  = await fetch('/display/api/memory/graph');
+    const res = await fetch('/display/api/memory/graph');
     const data = await res.json();
 
     const formattedNodes = data.nodes.map(subject => {
       const type = subject.subject_type?.toLowerCase() || 'other';
       const meta = TYPE_META[type] || TYPE_META.other;
       return {
-        id:    subject.jid,
+        id: subject.jid,
         label: subject.name,
         title: buildTooltip(subject),
         color: {
           background: meta.bg,
-          border:     meta.border,
-          highlight:  { background: meta.bg,    border: '#c9a84c' },
-          hover:      { background: meta.bg,    border: meta.border },
+          border: meta.border,
+          highlight: { background: meta.bg, border: '#c9a84c' },
+          hover: { background: meta.bg, border: meta.border },
         },
-        shadow: { color: meta.shadow },
+        // shadow disabled globally for performance
         subject,
       };
     });
@@ -298,20 +299,20 @@ async function refreshGraph({ focusName } = {}) {
 
 /* ── Subject CRUD ─────────────────────────────────────────── */
 async function saveSubject() {
-  const jid   = document.getElementById('edit-jid').value;
+  const jid = document.getElementById('edit-jid').value;
   const isNew = !jid;
 
   const payload = {
-    name:         document.getElementById('edit-name').value.trim(),
-    summary:      document.getElementById('edit-summary').value.trim(),
-    description:  document.getElementById('edit-description').value.trim(),
+    name: document.getElementById('edit-name').value.trim(),
+    summary: document.getElementById('edit-summary').value.trim(),
+    description: document.getElementById('edit-description').value.trim(),
     subject_type: document.getElementById('edit-type').value,
   };
 
   if (!payload.name) { showToast('Name is required'); return; }
 
   setLoading(true);
-  const url    = isNew
+  const url = isNew
     ? '/display/api/memory/subjects'
     : `/display/api/memory/subjects/${encodeURIComponent(jid)}`;
   const method = isNew ? 'POST' : 'PUT';
@@ -335,16 +336,16 @@ async function saveSubject() {
         const meta = TYPE_META[type] || TYPE_META.other;
         const updatedSubject = { ...payload, jid };
         nodes.update({
-          id:     jid,
-          label:  payload.name,
-          title:  buildTooltip(updatedSubject),
-          color:  {
+          id: jid,
+          label: payload.name,
+          title: buildTooltip(updatedSubject),
+          color: {
             background: meta.bg,
-            border:     meta.border,
-            highlight:  { background: meta.bg, border: '#c9a84c' },
-            hover:      { background: meta.bg, border: meta.border },
+            border: meta.border,
+            highlight: { background: meta.bg, border: '#c9a84c' },
+            hover: { background: meta.bg, border: meta.border },
           },
-          shadow:  { color: meta.shadow },
+          // shadow disabled globally for performance
           subject: updatedSubject,
         });
         setLoading(false);
@@ -424,7 +425,7 @@ async function saveRelation(edgeData, kind, callback) {
 async function apiDeleteRelation(edge, callback) {
   const srcNode = nodes.get(edge.from);
   const tgtNode = nodes.get(edge.to);
-  const kind    = edge.kind || edge.label;
+  const kind = edge.kind || edge.label;
 
   setLoading(true);
   try {
@@ -453,15 +454,15 @@ function showDetails(jid) {
   selectedNodeJid = jid;
   const s = node.subject || {};
 
-  document.getElementById('edit-jid').value         = jid;
-  document.getElementById('edit-name').value        = s.name         || '';
-  document.getElementById('edit-summary').value     = s.summary      || '';
-  document.getElementById('edit-description').value = s.description  || '';
-  document.getElementById('edit-type').value        = s.subject_type?.toLowerCase() || 'other';
+  document.getElementById('edit-jid').value = jid;
+  document.getElementById('edit-name').value = s.name || '';
+  document.getElementById('edit-summary').value = s.summary || '';
+  document.getElementById('edit-description').value = s.description || '';
+  document.getElementById('edit-type').value = s.subject_type?.toLowerCase() || 'other';
 
-  document.getElementById('sb-mode').textContent  = 'Editing Subject';
+  document.getElementById('sb-mode').textContent = 'Editing Subject';
   document.getElementById('sb-title').textContent = s.name || 'Subject';
-  document.getElementById('save-btn').textContent  = 'Save Changes';
+  document.getElementById('save-btn').textContent = 'Save Changes';
   document.getElementById('delete-btn').textContent = 'Delete Subject';
   document.getElementById('delete-btn').style.display = '';
 
@@ -476,15 +477,15 @@ function createNewSubject() {
   closeFab();
   selectedNodeJid = null;
 
-  document.getElementById('edit-jid').value         = '';
-  document.getElementById('edit-name').value        = '';
-  document.getElementById('edit-summary').value     = '';
+  document.getElementById('edit-jid').value = '';
+  document.getElementById('edit-name').value = '';
+  document.getElementById('edit-summary').value = '';
   document.getElementById('edit-description').value = '';
-  document.getElementById('edit-type').value        = 'person';
+  document.getElementById('edit-type').value = 'person';
 
-  document.getElementById('sb-mode').textContent  = 'New Subject';
+  document.getElementById('sb-mode').textContent = 'New Subject';
   document.getElementById('sb-title').textContent = 'Untitled';
-  document.getElementById('save-btn').textContent  = 'Create Subject';
+  document.getElementById('save-btn').textContent = 'Create Subject';
   document.getElementById('delete-btn').style.display = 'none';
 
   document.getElementById('node-fields').style.display = '';
@@ -500,15 +501,15 @@ function createNewSubject() {
 
 function closeSidebar() {
   document.getElementById('sidebar').classList.remove('open');
-  selectedNodeJid    = null;
-  selectedEdgeId     = null;
+  selectedNodeJid = null;
+  selectedEdgeId = null;
   currentSidebarMode = 'node';
   if (network) network.unselectAll();
 }
 
 /* ── Dispatch helpers ─────────────────────────────────────── */
 function saveDispatch() {
-  if (currentSidebarMode === 'edge')     saveEdge();
+  if (currentSidebarMode === 'edge') saveEdge();
   else if (currentSidebarMode === 'new-edge') saveNewRelation();
   else saveSubject();
 }
@@ -527,18 +528,18 @@ function showEdgeDetails(edgeId) {
   const tgtNode = nodes.get(edge.to);
   const srcName = srcNode?.subject?.name || srcNode?.label || '?';
   const tgtName = tgtNode?.subject?.name || tgtNode?.label || '?';
-  const kind    = edge.kind || edge.label || '';
+  const kind = edge.kind || edge.label || '';
 
-  selectedEdgeId     = edgeId;
-  selectedNodeJid    = null;
+  selectedEdgeId = edgeId;
+  selectedNodeJid = null;
   currentSidebarMode = 'edge';
 
-  document.getElementById('edit-edge-id').value  = edgeId;
+  document.getElementById('edit-edge-id').value = edgeId;
   document.getElementById('edge-from-name').textContent = srcName;
-  document.getElementById('edge-to-name').textContent   = tgtName;
+  document.getElementById('edge-to-name').textContent = tgtName;
 
   /* Pre-select the dropdown; fall back to 'other' for custom kinds */
-  const select   = document.getElementById('edge-kind');
+  const select = document.getElementById('edge-kind');
   const knownOpts = Array.from(select.options).map(o => o.value);
   if (knownOpts.includes(kind)) {
     select.value = kind;
@@ -549,9 +550,9 @@ function showEdgeDetails(edgeId) {
     document.getElementById('edge-kind-custom').value = kind;
   }
 
-  document.getElementById('sb-mode').textContent  = 'Editing Relation';
+  document.getElementById('sb-mode').textContent = 'Editing Relation';
   document.getElementById('sb-title').textContent = `${srcName} → ${tgtName}`;
-  document.getElementById('save-btn').textContent  = 'Save Changes';
+  document.getElementById('save-btn').textContent = 'Save Changes';
   document.getElementById('delete-btn').textContent = 'Delete Relation';
   document.getElementById('delete-btn').style.display = '';
 
@@ -569,7 +570,7 @@ function toggleEdgeCustomKind(value) {
 
 async function saveEdge() {
   const edgeId = document.getElementById('edit-edge-id').value;
-  const edge   = edges.get(edgeId);
+  const edge = edges.get(edgeId);
   if (!edge) return;
 
   let newKind = document.getElementById('edge-kind').value;
@@ -586,17 +587,17 @@ async function saveEdge() {
   /* Delete old relation then create the new one */
   const srcNode = nodes.get(edge.from);
   const tgtNode = nodes.get(edge.to);
-  const source  = srcNode?.subject?.name || srcNode?.label || '';
-  const target  = tgtNode?.subject?.name || tgtNode?.label || '';
+  const source = srcNode?.subject?.name || srcNode?.label || '';
+  const target = tgtNode?.subject?.name || tgtNode?.label || '';
 
   try {
     const delUrl = `/display/api/memory/relations?source=${encodeURIComponent(source)}&kind=${encodeURIComponent(oldKind)}&target=${encodeURIComponent(target)}`;
     await fetch(delUrl, { method: 'DELETE' });
 
     const res = await fetch('/display/api/memory/relations', {
-      method:  'POST',
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ source, kind: newKind, target }),
+      body: JSON.stringify({ source, kind: newKind, target }),
     });
 
     if (res.ok) {
@@ -615,7 +616,7 @@ async function saveEdge() {
 
 function deleteEdgeFromSidebar() {
   const edgeId = document.getElementById('edit-edge-id').value;
-  const edge   = edges.get(edgeId);
+  const edge = edges.get(edgeId);
   if (!edge) return;
 
   if (confirm('Delete this relationship?')) {
@@ -645,7 +646,7 @@ function togglePhysics() {
   network.setOptions({ physics: { enabled: physicsEnabled } });
   const btn = document.getElementById('physics-btn');
   btn.textContent = physicsEnabled ? '⏸' : '▶';
-  btn.title       = physicsEnabled ? 'Pause physics' : 'Resume physics';
+  btn.title = physicsEnabled ? 'Pause physics' : 'Resume physics';
 }
 
 function toggleFab() {
@@ -662,23 +663,23 @@ function startAddEdgeFlow() {
 }
 
 function showNewRelationSidebar(prefillSource = '') {
-  selectedNodeJid    = null;
-  selectedEdgeId     = null;
+  selectedNodeJid = null;
+  selectedEdgeId = null;
   currentSidebarMode = 'new-edge';
 
   document.getElementById('new-rel-source').value = prefillSource;
   document.getElementById('new-rel-target').value = '';
-  document.getElementById('new-rel-kind').value   = 'relates_to';
+  document.getElementById('new-rel-kind').value = 'relates_to';
   document.getElementById('new-rel-kind-custom').value = '';
   document.getElementById('new-rel-custom-container').style.display = 'none';
 
-  document.getElementById('sb-mode').textContent   = 'New Relation';
-  document.getElementById('sb-title').textContent  = 'Connect Subjects';
-  document.getElementById('save-btn').textContent  = 'Establish Relation';
+  document.getElementById('sb-mode').textContent = 'New Relation';
+  document.getElementById('sb-title').textContent = 'Connect Subjects';
+  document.getElementById('save-btn').textContent = 'Establish Relation';
   document.getElementById('delete-btn').style.display = 'none';
 
-  document.getElementById('node-fields').style.display     = 'none';
-  document.getElementById('edge-fields').style.display     = 'none';
+  document.getElementById('node-fields').style.display = 'none';
+  document.getElementById('edge-fields').style.display = 'none';
   document.getElementById('new-edge-fields').style.display = '';
 
   document.getElementById('sidebar').classList.add('open');
@@ -689,20 +690,20 @@ function showNewRelationSidebar(prefillSource = '') {
 async function saveNewRelation() {
   const source = document.getElementById('new-rel-source').value.trim();
   const target = document.getElementById('new-rel-target').value.trim();
-  let kind     = document.getElementById('new-rel-kind').value;
+  let kind = document.getElementById('new-rel-kind').value;
   if (kind === 'other') {
     kind = document.getElementById('new-rel-kind-custom').value.trim();
   }
 
   if (!source || !target) { showToast('Source and target are required'); return; }
-  if (!kind)               { showToast('Relationship type is required'); return; }
+  if (!kind) { showToast('Relationship type is required'); return; }
 
   setLoading(true);
   try {
     const res = await fetch('/display/api/memory/relations', {
-      method:  'POST',
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ source, kind, target }),
+      body: JSON.stringify({ source, kind, target }),
     });
     if (res.ok) {
       showToast('Relation established');
@@ -727,11 +728,11 @@ function toggleNewRelCustomKind(value) {
    RELATION MODAL
    ═══════════════════════════════════════════════════════════ */
 function showRelationModal(edgeData, callback) {
-  pendingEdgeData     = edgeData;
+  pendingEdgeData = edgeData;
   pendingEdgeCallback = callback;
 
-  document.getElementById('rel-kind-select').value     = 'relates_to';
-  document.getElementById('rel-kind-custom').value     = '';
+  document.getElementById('rel-kind-select').value = 'relates_to';
+  document.getElementById('rel-kind-custom').value = '';
   document.getElementById('custom-rel-container').style.display = 'none';
 
   document.getElementById('relation-modal').style.display = 'flex';
@@ -762,7 +763,7 @@ function closeRelationModal(success) {
     pendingEdgeCallback(null);
   }
 
-  pendingEdgeData     = null;
+  pendingEdgeData = null;
   pendingEdgeCallback = null;
 }
 
@@ -773,13 +774,13 @@ let hiddenTypes = new Set();
 let hiddenKinds = new Set();
 
 const TYPE_COLORS = {
-  person:  '#e87c8a',
+  person: '#e87c8a',
   concept: '#7cb4e8',
-  goal:    '#7ce8a8',
-  event:   '#e8c87c',
-  place:   '#b47ce8',
-  object:  '#e87cb4',
-  other:   '#7090a4',
+  goal: '#7ce8a8',
+  event: '#e8c87c',
+  place: '#b47ce8',
+  object: '#e87cb4',
+  other: '#7090a4',
 };
 
 function toggleFilterPanel() {
@@ -800,7 +801,7 @@ function populateFilterPanel() {
   Object.entries(TYPE_COLORS).forEach(([type, color]) => {
     const count = typeCounts[type] || 0;
     const isOff = hiddenTypes.has(type);
-    const item  = document.createElement('div');
+    const item = document.createElement('div');
     item.className = `fi${isOff ? ' off' : ''}`;
     item.dataset.type = type;
     item.innerHTML = `
@@ -819,16 +820,16 @@ function populateFilterPanel() {
     kindCounts[k] = (kindCounts[k] || 0) + 1;
   });
 
-  const kindsEl      = document.getElementById('filter-kinds');
+  const kindsEl = document.getElementById('filter-kinds');
   const kindsSection = document.getElementById('filter-kinds-section');
-  kindsEl.innerHTML  = '';
+  kindsEl.innerHTML = '';
 
   const kindEntries = Object.entries(kindCounts);
   kindsSection.style.display = kindEntries.length > 0 ? '' : 'none';
 
   kindEntries.sort((a, b) => b[1] - a[1]).forEach(([kind, count]) => {
     const isOff = hiddenKinds.has(kind);
-    const item  = document.createElement('div');
+    const item = document.createElement('div');
     item.className = `fi${isOff ? ' off' : ''}`;
     item.dataset.kind = kind;
     item.innerHTML = `
@@ -861,7 +862,7 @@ function applyFilter() {
 
   /* Nodes: hide if type-filtered OR doesn't match search */
   nodes.update(nodes.get().map(n => {
-    const type       = n.subject?.subject_type?.toLowerCase() || 'other';
+    const type = n.subject?.subject_type?.toLowerCase() || 'other';
     const typeHidden = hiddenTypes.has(type);
     const srchHidden = re ? !matchesSearch(n.subject, re) : false;
     return { id: n.id, hidden: typeHidden || srchHidden };
@@ -869,10 +870,10 @@ function applyFilter() {
 
   /* Edges: hide if connected node is hidden OR relation kind is hidden */
   edges.update(edges.get().map(e => ({
-    id:     e.id,
+    id: e.id,
     hidden: nodes.get(e.from)?.hidden
-         || nodes.get(e.to)?.hidden
-         || hiddenKinds.has((e.kind || e.label || '').toLowerCase()),
+      || nodes.get(e.to)?.hidden
+      || hiddenKinds.has((e.kind || e.label || '').toLowerCase()),
   })));
 }
 
@@ -885,23 +886,23 @@ function getSearchRegex() {
 }
 
 function matchesSearch(subject, re) {
-  return re.test(subject?.name        || '')
-      || re.test(subject?.summary     || '')
-      || re.test(subject?.description || '');
+  return re.test(subject?.name || '')
+    || re.test(subject?.summary || '')
+    || re.test(subject?.description || '');
 }
 
 function onSearchInput() {
-  const val      = document.getElementById('search-input').value;
+  const val = document.getElementById('search-input').value;
   const clearBtn = document.getElementById('search-clear');
   const statusEl = document.getElementById('search-status');
-  const wrap     = document.getElementById('search-wrap');
+  const wrap = document.getElementById('search-wrap');
 
   clearBtn.style.display = val.trim() ? '' : 'none';
 
   if (!val.trim()) {
     wrap.classList.remove('invalid');
     statusEl.textContent = '';
-    statusEl.className   = 'search-status';
+    statusEl.className = 'search-status';
     applyFilter();
     updateFilterBtn();
     return;
@@ -914,7 +915,7 @@ function onSearchInput() {
   } catch {
     wrap.classList.add('invalid');
     statusEl.textContent = 'invalid regex';
-    statusEl.className   = 'search-status error';
+    statusEl.className = 'search-status error';
     return;
   }
 
@@ -922,27 +923,27 @@ function onSearchInput() {
   updateFilterBtn();
 
   /* Show match count after filter is applied */
-  const all     = nodes.get();
+  const all = nodes.get();
   const matched = all.filter(n => !n.hidden).length;
   if (matched === 0) {
     statusEl.textContent = 'no matches';
-    statusEl.className   = 'search-status no-match';
+    statusEl.className = 'search-status no-match';
   } else {
     statusEl.textContent = `${matched} of ${all.length}`;
-    statusEl.className   = 'search-status has-match';
+    statusEl.className = 'search-status has-match';
   }
 }
 
 function clearSearch() {
-  const input    = document.getElementById('search-input');
+  const input = document.getElementById('search-input');
   const clearBtn = document.getElementById('search-clear');
   const statusEl = document.getElementById('search-status');
-  const wrap     = document.getElementById('search-wrap');
+  const wrap = document.getElementById('search-wrap');
 
-  input.value          = '';
+  input.value = '';
   clearBtn.style.display = 'none';
-  statusEl.textContent   = '';
-  statusEl.className     = 'search-status';
+  statusEl.textContent = '';
+  statusEl.className = 'search-status';
   wrap.classList.remove('invalid');
 
   applyFilter();
@@ -972,14 +973,14 @@ function setLoading(active) {
 
 function showToast(message) {
   const container = document.getElementById('toast-container');
-  const toast     = document.createElement('div');
+  const toast = document.createElement('div');
   toast.className = 'toast';
   toast.textContent = message;
   container.appendChild(toast);
 
   setTimeout(() => {
     toast.style.transition = 'opacity 0.25s';
-    toast.style.opacity    = '0';
+    toast.style.opacity = '0';
     setTimeout(() => toast.remove(), 280);
   }, 3000);
 }
