@@ -213,3 +213,95 @@ walker DeleteSubject {
         report {"status": "error", "message": "Subject not found"};
     }
 }
+
+# Retrieve full context for a subject: its data + 1-hop outbound neighbors.
+walker GetSubjectContext {
+    has name: str;
+
+    can collect with User entry {
+        tname: str = str(self.name);
+        subjects = [-->][?:Subject];
+        for sub in subjects {
+            if sub.name == tname {
+                neighbors: list = [];
+                for nbr in [sub-->][?:Subject] {
+                    neighbors.append({
+                        "name": nbr.name,
+                        "summary": nbr.summary,
+                        "subject_type": nbr.subject_type
+                    });
+                }
+                report {
+                    "jid": jid(sub),
+                    "name": sub.name,
+                    "summary": sub.summary,
+                    "description": sub.description,
+                    "subject_type": sub.subject_type,
+                    "recent_events": sub.recent_events,
+                    "neighbors": neighbors
+                };
+                disengage;
+            }
+        }
+    }
+}
+
+# Clear the recent_events WAL for a subject and write new summary/description.
+walker ClearSubjectWAL {
+    has name: str;
+    has new_summary: str;
+    has new_description: str;
+    has now: str;
+
+    can update with User entry {
+        tname: str = str(self.name);
+        subjects = [-->][?:Subject];
+        for sub in subjects {
+            if sub.name == tname {
+                sub.summary = self.new_summary;
+                sub.description = self.new_description;
+                sub.recent_events = [];
+                sub.updated_at = self.now;
+                report {"status": "success", "jid": jid(sub)};
+                disengage;
+            }
+        }
+        report {"status": "not_found"};
+    }
+}
+
+# Delete a specific Relates edge by source name, kind, and target name.
+# keep_kinds: edge kinds between src->tgt that should survive (the rest are deleted).
+# Strategy: delete all src->tgt edges then re-add the surviving kinds.
+walker DeleteRelates {
+    has source_name: str;
+    has kind: str;
+    has target_name: str;
+    has keep_kinds: list;
+    has now: str;
+
+    can delete with User entry {
+        rsrc: str = str(self.source_name);
+        rtgt: str = str(self.target_name);
+        src_nodes = [-->][?:Subject, name==rsrc];
+        tgt_nodes = [-->][?:Subject, name==rtgt];
+        if src_nodes {
+            if tgt_nodes {
+                src = src_nodes[0];
+                tgt = tgt_nodes[0];
+                src del --> tgt;
+                for k in self.keep_kinds {
+                    src +>: Relates(
+                        kind=str(k),
+                        weight=1.0,
+                        created_at=self.now,
+                        updated_at=self.now
+                    ) :+> tgt;
+                }
+                report {"status": "success"};
+                disengage;
+            }
+        }
+        report {"status": "not_found"};
+    }
+}

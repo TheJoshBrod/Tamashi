@@ -99,6 +99,12 @@ async def consolidate_if_needed(session_id: str, store) -> None:
                     len(subjects), len(relations), session_id,
                 )
 
+            # Dispatch WAL rewrites for subjects that crossed the threshold.
+            if needs_rewrite:
+                from memory.rewriter import rewrite_subject
+                for subject_name in needs_rewrite:
+                    asyncio.create_task(rewrite_subject(session_id, subject_name))
+
         # Only advance the consolidation mark when all writes succeeded.
         if vector_ok:
             cutoff = max_id - settings.working_memory_size

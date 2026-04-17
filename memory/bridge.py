@@ -20,7 +20,10 @@ import logging
 from core.config import settings
 from jaclang.lib import spawn, root
 
-from memory.walkers import GetOrCreateUser, IngestSubjects, LoadSubjects, RetrieveSubjects
+from memory.walkers import (
+    GetOrCreateUser, IngestSubjects, LoadSubjects, RetrieveSubjects,
+    GetSubjectContext, ClearSubjectWAL, DeleteRelates,
+)
 from memory.store import subject_store
 
 log = logging.getLogger(__name__)
@@ -363,24 +366,153 @@ def add_relation(user_id: str, src_name: str, kind: str, tgt_name: str) -> dict:
     return ingest_subjects(user_id, [], [{"source": src_name, "kind": kind, "target": tgt_name}])
 
 
+def get_subject_context(user_id: str, name: str) -> dict | None:
+    """Return context for a Subject: data + 1-hop outbound neighbors with edge kinds.
+
+    Neighbor edge kinds are joined from SQLite since Jac traversal returns nodes only.
+    Returns None if the subject is not found.
+    """
+    _ensure_loaded(user_id)
+    user_node = _get_user_node(user_id)
+
+    result = spawn(GetSubjectContext(name=name), user_node)
+    if not result.reports:
+        return None
+
+    raw = result.reports[0]
+    if not raw.get("name"):
+        return None
+
+    # Enrich neighbors with edge kind from SQLite
+    relations = subject_store.get_relations(user_id)
+    rel_lookup: dict[tuple[str, str], list[str]] = {}
+    for rel in relations:
+        key = (rel["src_name"], rel["tgt_name"])
+        rel_lookup.setdefault(key, []).append(rel["kind"])
+
+    enriched_neighbors = []
+    for nbr in raw.get("neighbors", []):
+        nbr_name = nbr["name"]
+        kinds = rel_lookup.get((name, nbr_name), [])
+        enriched_neighbors.append({
+            **nbr,
+            "edge_kind": kinds[0] if kinds else "related_to",
+        })
+
+    return {
+        "subject": {
+            "jid": raw["jid"],
+            "name": raw["name"],
+            "summary": raw["summary"],
+            "description": raw["description"],
+            "subject_type": raw["subject_type"],
+            "recent_events": raw["recent_events"],
+        },
+        "neighbors": enriched_neighbors,
+    }
+
+
+def apply_rewrite(
+    user_id: str,
+    name: str,
+    new_summary: str,
+    new_description: str,
+    add_edges: list[dict],
+    remove_edges: list[dict],
+) -> dict:
+    """Apply a rewriter's mutations: clear WAL, update summary/description, mutate edges.
+
+    Writes through all three layers: Jac graph, SQLite, Qdrant.
+    """
+    _ensure_loaded(user_id)
+    user_node = _get_user_node(user_id)
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
+    # 1. Update Jac in-memory graph (clears WAL + writes new summary/description)
+    result = spawn(ClearSubjectWAL(
+        name=name,
+        new_summary=new_summary,
+        new_description=new_description,
+        now=now,
+    ), user_node)
+
+    jid_str: str | None = None
+    if result.reports and result.reports[0].get("status") == "success":
+        jid_str = str(result.reports[0].get("jid", ""))
+
+    # 2. Determine subject_type (needed for SQLite upsert and Qdrant)
+    subject_type = "other"
+    if not jid_str:
+        for s in subject_store.get_subjects(user_id, limit=1000):
+            if s["name"] == name:
+                subject_type = s["subject_type"]
+                jid_str = s.get("jid")
+                break
+    else:
+        for s in subject_store.get_subjects(user_id, limit=1000):
+            if s["name"] == name:
+                subject_type = s["subject_type"]
+                break
+
+    # 3. Persist updated subject to SQLite (clears WAL)
+    subject_store.upsert_subject(
+        user_id=user_id,
+        name=name,
+        summary=new_summary,
+        description=new_description,
+        subject_type=subject_type,
+        recent_events=[],
+        node_jid=jid_str,
+    )
+
+    # 4. Add new edges
+    if add_edges:
+        edge_dicts = [
+            {"source": name, "kind": e["kind"], "target": e["target"]}
+            for e in add_edges
+        ]
+        ingest_subjects(user_id, [], edge_dicts)
+
+    # 5. Remove edges
+    for edge in remove_edges:
+        delete_relation(user_id, name, edge["kind"], edge["target"])
+
+    # 6. Re-embed in Qdrant (idempotent via stable node_id hash)
+    if jid_str:
+        try:
+            from memory.vector import vector_store
+            vector_store.upsert(jid_str, user_id, "subject", name, new_summary, subject_type)
+        except Exception:
+            log.warning("vector upsert failed during apply_rewrite for %r", name)
+
+    return {"status": "success", "jid": jid_str}
+
+
 def delete_relation(user_id: str, src_name: str, kind: str, tgt_name: str) -> dict:
     """Delete a relation across layers."""
     _ensure_loaded(user_id)
     user_node = _get_user_node(user_id)
-    
-    # 1. Jac Graph
-    from memory.walkers import RetrieveFullGraph
-    # We need JIDs for DeleteRelation walker if we wanted to use it, 
-    # but DeleteRelation used JIDs. Let's use names for ingestion/deletion consistency.
-    
-    # I didn't implement DeleteRelationByName in walkers.jac.
-    # Let's just use SQLite and rely on _ensure_loaded or a full reload later.
-    # Actually, it's better to stay in sync.
-    
-    # For now, let's just update SQLite and clear _loaded_users to force reload on next access
-    # (simplest way to ensure sync without complex edge walkers).
+
+    # 1. Delete from SQLite first so keep_kinds is accurate
     subject_store.delete_relation(user_id, src_name, kind, tgt_name)
-    if user_id in _loaded_users:
-        _loaded_users.remove(user_id) # Force reload
-        
+
+    # 2. Delete from Jac in-memory graph using DeleteRelates walker.
+    #    Walker deletes all src->tgt edges then re-adds any surviving kinds.
+    remaining = subject_store.get_relations(user_id)
+    keep_kinds = [
+        r["kind"] for r in remaining
+        if r["src_name"] == src_name and r["tgt_name"] == tgt_name
+    ]
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    spawn(DeleteRelates(
+        source_name=src_name,
+        kind=kind,
+        target_name=tgt_name,
+        keep_kinds=keep_kinds,
+        now=now,
+    ), user_node)
+
     return {"status": "success"}
