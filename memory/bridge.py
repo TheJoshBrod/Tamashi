@@ -317,7 +317,7 @@ def update_subject(
     # 3. Qdrant: Always upsert to update summary/embedding
     try:
         from memory.vector import vector_store
-        vector_store.upsert(jid, user_id, "subject", name, summary, subject_type)
+        vector_store.upsert(jid, user_id, "subject", name, summary=summary, subject_type=subject_type, description=description)
     except Exception:
         log.warning("vector upsert failed during manual update")
         
@@ -483,7 +483,7 @@ def apply_rewrite(
     if jid_str:
         try:
             from memory.vector import vector_store
-            vector_store.upsert(jid_str, user_id, "subject", name, new_summary, subject_type)
+            vector_store.upsert(jid_str, user_id, "subject", name, summary=new_summary, subject_type=subject_type, description=new_description)
         except Exception:
             log.warning("vector upsert failed during apply_rewrite for %r", name)
 

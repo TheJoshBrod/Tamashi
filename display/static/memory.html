@@ -7,33 +7,43 @@
   <title>Tamashi | Memory Cartography</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap"
+    rel="stylesheet">
   <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
   <style>
     /* ╔══════════════════════════════════════╗
        ║         FOUNDATION & TOKENS          ║
        ╚══════════════════════════════════════╝ */
     :root {
-      --void:        #040410;
-      --void-2:      #07071a;
-      --panel:       rgba(6, 6, 20, 0.9);
+      --void: #040410;
+      --void-2: #07071a;
+      --panel: rgba(6, 6, 20, 0.9);
       --panel-solid: #0c0c20;
-      --gold:        #c9a84c;
+      --gold: #c9a84c;
       --gold-bright: #e8c874;
-      --gold-dim:    rgba(201, 168, 76, 0.10);
+      --gold-dim: rgba(201, 168, 76, 0.10);
       --gold-border: rgba(201, 168, 76, 0.22);
-      --text:        #ece4d4;
-      --text-muted:  rgba(236, 228, 212, 0.45);
-      --text-faint:  rgba(236, 228, 212, 0.18);
-      --border:      rgba(201, 168, 76, 0.18);
-      --danger:      #e87c7c;
-      --success:     #7ce8a8;
+      --text: #ece4d4;
+      --text-muted: rgba(236, 228, 212, 0.45);
+      --text-faint: rgba(236, 228, 212, 0.18);
+      --border: rgba(201, 168, 76, 0.18);
+      --danger: #e87c7c;
+      --success: #7ce8a8;
     }
 
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
 
-    html, body {
-      width: 100%; height: 100%;
+    html,
+    body {
+      width: 100%;
+      height: 100%;
       overflow: hidden;
       background: var(--void);
       color: var(--text);
@@ -57,7 +67,7 @@
       position: fixed;
       inset: 0;
       z-index: 1;
-      background: radial-gradient(ellipse at 50% 50%, transparent 40%, rgba(4,4,16,0.6) 100%);
+      background: radial-gradient(ellipse at 50% 50%, transparent 40%, rgba(4, 4, 16, 0.6) 100%);
       pointer-events: none;
     }
 
@@ -75,9 +85,11 @@
        ╚══════════════════════════════════════╝ */
     #top-bar {
       position: absolute;
-      top: 0; left: 0; right: 0;
+      top: 0;
+      left: 0;
+      right: 0;
       height: 60px;
-      background: linear-gradient(to bottom, rgba(4,4,16,0.97) 0%, rgba(4,4,16,0.0) 100%);
+      background: linear-gradient(to bottom, rgba(4, 4, 16, 0.97) 0%, rgba(4, 4, 16, 0.0) 100%);
       display: flex;
       align-items: center;
       padding: 0 28px;
@@ -86,7 +98,9 @@
       pointer-events: none;
     }
 
-    #top-bar > * { pointer-events: auto; }
+    #top-bar>* {
+      pointer-events: auto;
+    }
 
     .brand {
       font-family: 'Cormorant Garamond', Georgia, serif;
@@ -132,9 +146,13 @@
       transition: color 0.3s;
     }
 
-    .top-stat-value.loaded { color: var(--text); }
+    .top-stat-value.loaded {
+      color: var(--text);
+    }
 
-    .top-spacer { flex: 1; }
+    .top-spacer {
+      flex: 1;
+    }
 
     .top-btn {
       font-family: 'JetBrains Mono', monospace;
@@ -152,7 +170,7 @@
     }
 
     .top-btn:hover {
-      border-color: rgba(201,168,76,0.5);
+      border-color: rgba(201, 168, 76, 0.5);
       color: var(--gold);
       background: var(--gold-dim);
     }
@@ -173,10 +191,15 @@
     }
 
     @keyframes fadeIn {
-      to { opacity: 0.65; }
+      to {
+        opacity: 0.65;
+      }
     }
 
-    #legend:hover { opacity: 1; transition: opacity 0.2s; }
+    #legend:hover {
+      opacity: 1;
+      transition: opacity 0.2s;
+    }
 
     .legend-item {
       display: flex;
@@ -189,7 +212,8 @@
     }
 
     .legend-dot {
-      width: 7px; height: 7px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
       flex-shrink: 0;
       filter: blur(0.5px);
@@ -203,7 +227,7 @@
       bottom: 24px;
       left: 24px;
       display: flex;
-      background: rgba(6,6,20,0.85);
+      background: rgba(6, 6, 20, 0.85);
       border: 1px solid var(--border);
       border-radius: 3px;
       overflow: hidden;
@@ -212,7 +236,8 @@
     }
 
     .zoom-btn {
-      width: 36px; height: 36px;
+      width: 36px;
+      height: 36px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -230,7 +255,10 @@
       background: var(--gold-dim);
     }
 
-    .zoom-divider { width: 1px; background: var(--border); }
+    .zoom-divider {
+      width: 1px;
+      background: var(--border);
+    }
 
     /* ╔══════════════════════════════════════╗
        ║               FAB                    ║
@@ -274,7 +302,7 @@
       letter-spacing: 0.1em;
       text-transform: uppercase;
       color: var(--text-muted);
-      background: rgba(4,4,16,0.92);
+      background: rgba(4, 4, 16, 0.92);
       padding: 5px 11px;
       border-radius: 2px;
       border: 1px solid var(--border);
@@ -283,9 +311,10 @@
     }
 
     .fab-sub-btn {
-      width: 40px; height: 40px;
+      width: 40px;
+      height: 40px;
       border-radius: 50%;
-      background: rgba(6,6,20,0.92);
+      background: rgba(6, 6, 20, 0.92);
       border: 1px solid var(--border);
       color: var(--text-muted);
       font-size: 1rem;
@@ -300,11 +329,12 @@
     .fab-sub-btn:hover {
       border-color: var(--gold);
       color: var(--gold);
-      box-shadow: 0 0 16px rgba(201,168,76,0.2);
+      box-shadow: 0 0 16px rgba(201, 168, 76, 0.2);
     }
 
     .fab-main {
-      width: 50px; height: 50px;
+      width: 50px;
+      height: 50px;
       border-radius: 50%;
       background: var(--gold);
       color: var(--void);
@@ -312,7 +342,7 @@
       font-size: 1.6rem;
       line-height: 1;
       cursor: pointer;
-      box-shadow: 0 0 28px rgba(201,168,76,0.3), 0 4px 20px rgba(0,0,0,0.5);
+      box-shadow: 0 0 28px rgba(201, 168, 76, 0.3), 0 4px 20px rgba(0, 0, 0, 0.5);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -321,12 +351,12 @@
 
     .fab-main:hover {
       transform: scale(1.08);
-      box-shadow: 0 0 40px rgba(201,168,76,0.45), 0 4px 24px rgba(0,0,0,0.5);
+      box-shadow: 0 0 40px rgba(201, 168, 76, 0.45), 0 4px 24px rgba(0, 0, 0, 0.5);
     }
 
     #fab.open .fab-main {
       transform: rotate(45deg);
-      background: rgba(201,168,76,0.12);
+      background: rgba(201, 168, 76, 0.12);
       border: 1px solid var(--gold-border);
       color: var(--gold);
       box-shadow: none;
@@ -337,7 +367,8 @@
        ╚══════════════════════════════════════╝ */
     #sidebar {
       position: absolute;
-      top: 0; right: 0;
+      top: 0;
+      right: 0;
       width: 360px;
       height: 100%;
       background: var(--panel);
@@ -360,7 +391,9 @@
     #sidebar::before {
       content: '';
       position: absolute;
-      top: 0; left: 0; right: 0;
+      top: 0;
+      left: 0;
+      right: 0;
       height: 2px;
       background: linear-gradient(to right, transparent, var(--gold), transparent);
       opacity: 0.6;
@@ -392,8 +425,10 @@
 
     .sb-close {
       position: absolute;
-      top: 22px; right: 22px;
-      width: 30px; height: 30px;
+      top: 22px;
+      right: 22px;
+      width: 30px;
+      height: 30px;
       border-radius: 50%;
       background: transparent;
       border: 1px solid var(--border);
@@ -406,7 +441,10 @@
       transition: all 0.2s;
     }
 
-    .sb-close:hover { border-color: var(--gold); color: var(--gold); }
+    .sb-close:hover {
+      border-color: var(--gold);
+      color: var(--gold);
+    }
 
     .sb-body {
       flex: 1;
@@ -416,11 +454,22 @@
       scrollbar-color: var(--border) transparent;
     }
 
-    .sb-body::-webkit-scrollbar { width: 3px; }
-    .sb-body::-webkit-scrollbar-track { background: transparent; }
-    .sb-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .sb-body::-webkit-scrollbar {
+      width: 3px;
+    }
 
-    .form-field { margin-bottom: 22px; }
+    .sb-body::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .sb-body::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px;
+    }
+
+    .form-field {
+      margin-bottom: 22px;
+    }
 
     .edge-readonly {
       padding: 8px 0;
@@ -455,8 +504,13 @@
       letter-spacing: 0.02em;
     }
 
-    .form-input:focus { border-bottom-color: var(--gold); }
-    .form-input::placeholder { color: var(--text-faint); }
+    .form-input:focus {
+      border-bottom-color: var(--gold);
+    }
+
+    .form-input::placeholder {
+      color: var(--text-faint);
+    }
 
     .form-select {
       width: 100%;
@@ -478,12 +532,18 @@
       transition: border-color 0.2s;
     }
 
-    .form-select:focus { border-bottom-color: var(--gold); }
-    .form-select option { background: var(--panel-solid); color: var(--text); }
+    .form-select:focus {
+      border-bottom-color: var(--gold);
+    }
+
+    .form-select option {
+      background: var(--panel-solid);
+      color: var(--text);
+    }
 
     .form-textarea {
       width: 100%;
-      background: rgba(201,168,76,0.025);
+      background: rgba(201, 168, 76, 0.025);
       border: 1px solid var(--border);
       border-radius: 3px;
       color: var(--text);
@@ -499,8 +559,13 @@
       letter-spacing: 0.01em;
     }
 
-    .form-textarea:focus { border-color: var(--gold); }
-    .form-textarea::placeholder { color: var(--text-faint); }
+    .form-textarea:focus {
+      border-color: var(--gold);
+    }
+
+    .form-textarea::placeholder {
+      color: var(--text-faint);
+    }
 
     .sb-footer {
       padding: 18px 28px 26px;
@@ -533,7 +598,9 @@
       color: var(--void);
     }
 
-    .btn-gold:hover { background: var(--gold-bright); }
+    .btn-gold:hover {
+      background: var(--gold-bright);
+    }
 
     .btn-ghost {
       background: transparent;
@@ -541,16 +608,19 @@
       color: var(--text-muted);
     }
 
-    .btn-ghost:hover { border-color: var(--text-muted); color: var(--text); }
+    .btn-ghost:hover {
+      border-color: var(--text-muted);
+      color: var(--text);
+    }
 
     .btn-danger {
       background: transparent;
-      border: 1px solid rgba(232,124,124,0.25);
-      color: rgba(232,124,124,0.6);
+      border: 1px solid rgba(232, 124, 124, 0.25);
+      color: rgba(232, 124, 124, 0.6);
     }
 
     .btn-danger:hover {
-      background: rgba(232,124,124,0.08);
+      background: rgba(232, 124, 124, 0.08);
       border-color: var(--danger);
       color: var(--danger);
     }
@@ -562,7 +632,7 @@
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(4,4,16,0.82);
+      background: rgba(4, 4, 16, 0.82);
       backdrop-filter: blur(10px);
       z-index: 400;
       align-items: center;
@@ -580,8 +650,15 @@
     }
 
     @keyframes modalIn {
-      from { transform: scale(0.93) translateY(8px); opacity: 0; }
-      to   { transform: scale(1) translateY(0); opacity: 1; }
+      from {
+        transform: scale(0.93) translateY(8px);
+        opacity: 0;
+      }
+
+      to {
+        transform: scale(1) translateY(0);
+        opacity: 1;
+      }
     }
 
     /* Decorative top stripe */
@@ -613,7 +690,9 @@
       color: var(--text);
     }
 
-    .modal-body { padding: 22px 28px 10px; }
+    .modal-body {
+      padding: 22px 28px 10px;
+    }
 
     .modal-footer {
       padding: 14px 28px 24px;
@@ -621,7 +700,9 @@
       gap: 10px;
     }
 
-    .modal-footer .btn { flex: 1; }
+    .modal-footer .btn {
+      flex: 1;
+    }
 
     /* ╔══════════════════════════════════════╗
        ║           NOTIFICATIONS              ║
@@ -640,7 +721,7 @@
     }
 
     .toast {
-      background: rgba(6,6,20,0.96);
+      background: rgba(6, 6, 20, 0.96);
       border: 1px solid var(--gold-border);
       color: var(--text-muted);
       font-size: 0.68rem;
@@ -653,8 +734,15 @@
     }
 
     @keyframes toastIn {
-      from { transform: translateY(8px); opacity: 0; }
-      to   { transform: translateY(0); opacity: 1; }
+      from {
+        transform: translateY(8px);
+        opacity: 0;
+      }
+
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
     }
 
     /* ╔══════════════════════════════════════╗
@@ -665,7 +753,7 @@
       top: 18px;
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(6,6,20,0.92);
+      background: rgba(6, 6, 20, 0.92);
       border: 1px solid var(--border);
       padding: 7px 18px;
       border-radius: 2px;
@@ -681,21 +769,27 @@
     }
 
     .spinner {
-      width: 11px; height: 11px;
-      border: 1.5px solid rgba(201,168,76,0.25);
+      width: 11px;
+      height: 11px;
+      border: 1.5px solid rgba(201, 168, 76, 0.25);
       border-top-color: var(--gold);
       border-radius: 50%;
       animation: spin 0.65s linear infinite;
     }
 
-    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
 
     /* ╔══════════════════════════════════════╗
        ║            EMPTY STATE               ║
        ╚══════════════════════════════════════╝ */
     #empty-state {
       position: absolute;
-      top: 50%; left: 50%;
+      top: 50%;
+      left: 50%;
       transform: translate(-50%, -50%);
       text-align: center;
       display: none;
@@ -714,8 +808,15 @@
     }
 
     @keyframes pulse {
-      0%, 100% { opacity: 0.08; }
-      50%       { opacity: 0.13; }
+
+      0%,
+      100% {
+        opacity: 0.08;
+      }
+
+      50% {
+        opacity: 0.13;
+      }
     }
 
     .empty-title {
@@ -723,14 +824,14 @@
       font-size: 1.35rem;
       font-weight: 300;
       font-style: italic;
-      color: rgba(236,228,212,0.3);
+      color: rgba(236, 228, 212, 0.3);
       margin-top: 18px;
       letter-spacing: 0.04em;
     }
 
     .empty-hint {
       font-size: 0.58rem;
-      color: rgba(236,228,212,0.15);
+      color: rgba(236, 228, 212, 0.15);
       margin-top: 12px;
       text-transform: uppercase;
       letter-spacing: 0.14em;
@@ -739,10 +840,12 @@
     /* ╔══════════════════════════════════════╗
        ║         VIS.JS OVERRIDES             ║
        ╚══════════════════════════════════════╝ */
-    .vis-network:focus { outline: none; }
+    .vis-network:focus {
+      outline: none;
+    }
 
     .vis-tooltip {
-      background: rgba(6,6,20,0.96) !important;
+      background: rgba(6, 6, 20, 0.96) !important;
       border: 1px solid var(--gold-border) !important;
       color: var(--text) !important;
       font-family: 'JetBrains Mono', monospace !important;
@@ -764,7 +867,9 @@
        ╚══════════════════════════════════════╝ */
     #filter-panel {
       position: absolute;
-      top: 60px; left: 0; bottom: 0;
+      top: 60px;
+      left: 0;
+      bottom: 0;
       width: 220px;
       background: var(--panel);
       backdrop-filter: blur(24px);
@@ -781,13 +886,17 @@
     #filter-panel::before {
       content: '';
       position: absolute;
-      top: 0; left: 0; right: 0;
+      top: 0;
+      left: 0;
+      right: 0;
       height: 2px;
       background: linear-gradient(to right, var(--gold), transparent);
       opacity: 0.5;
     }
 
-    #filter-panel.open { transform: translateX(0); }
+    #filter-panel.open {
+      transform: translateX(0);
+    }
 
     .fp-header {
       padding: 20px 18px 14px;
@@ -818,7 +927,9 @@
       transition: color 0.15s;
     }
 
-    .fp-reset:hover { color: var(--gold); }
+    .fp-reset:hover {
+      color: var(--gold);
+    }
 
     .fp-body {
       flex: 1;
@@ -827,14 +938,19 @@
       scrollbar-color: var(--border) transparent;
     }
 
-    .fp-body::-webkit-scrollbar { width: 3px; }
-    .fp-body::-webkit-scrollbar-thumb { background: var(--border); }
+    .fp-body::-webkit-scrollbar {
+      width: 3px;
+    }
+
+    .fp-body::-webkit-scrollbar-thumb {
+      background: var(--border);
+    }
 
     .fp-section {
       padding: 14px 18px 10px;
     }
 
-    .fp-section + .fp-section {
+    .fp-section+.fp-section {
       border-top: 1px solid var(--border);
     }
 
@@ -856,12 +972,17 @@
       user-select: none;
     }
 
-    .fi:hover { opacity: 1 !important; }
+    .fi:hover {
+      opacity: 1 !important;
+    }
 
-    .fi.off { opacity: 0.3; }
+    .fi.off {
+      opacity: 0.3;
+    }
 
     .fi-check {
-      width: 13px; height: 13px;
+      width: 13px;
+      height: 13px;
       border: 1px solid var(--gold-border);
       border-radius: 2px;
       display: flex;
@@ -874,12 +995,13 @@
     }
 
     .fi.off .fi-check {
-      border-color: rgba(201,168,76,0.12);
+      border-color: rgba(201, 168, 76, 0.12);
       color: transparent;
     }
 
     .fi-dot {
-      width: 7px; height: 7px;
+      width: 7px;
+      height: 7px;
       border-radius: 50%;
       flex-shrink: 0;
     }
@@ -901,7 +1023,7 @@
 
     /* Active filter indicator on the button */
     .top-btn.filter-active {
-      border-color: rgba(201,168,76,0.5);
+      border-color: rgba(201, 168, 76, 0.5);
       color: var(--gold);
     }
 
@@ -911,14 +1033,19 @@
       align-items: center;
       border: 1px solid var(--border);
       border-radius: 2px;
-      background: rgba(201,168,76,0.025);
+      background: rgba(201, 168, 76, 0.025);
       padding: 0 8px;
       gap: 4px;
       transition: border-color 0.2s;
     }
 
-    .search-wrap:focus-within { border-color: var(--gold-border); }
-    .search-wrap.invalid      { border-color: rgba(232,124,124,0.5); }
+    .search-wrap:focus-within {
+      border-color: var(--gold-border);
+    }
+
+    .search-wrap.invalid {
+      border-color: rgba(232, 124, 124, 0.5);
+    }
 
     .search-delim {
       font-size: 0.7rem;
@@ -942,7 +1069,9 @@
       letter-spacing: 0.02em;
     }
 
-    .search-input::placeholder { color: var(--text-faint); }
+    .search-input::placeholder {
+      color: var(--text-faint);
+    }
 
     .search-clear-btn {
       background: none;
@@ -956,7 +1085,9 @@
       flex-shrink: 0;
     }
 
-    .search-clear-btn:hover { color: var(--text-muted); }
+    .search-clear-btn:hover {
+      color: var(--text-muted);
+    }
 
     .search-status {
       font-size: 0.58rem;
@@ -966,9 +1097,17 @@
       min-height: 13px;
     }
 
-    .search-status.no-match { color: rgba(232,124,124,0.6); }
-    .search-status.has-match { color: rgba(124,232,168,0.6); }
-    .search-status.error     { color: rgba(232,124,124,0.6); }
+    .search-status.no-match {
+      color: rgba(232, 124, 124, 0.6);
+    }
+
+    .search-status.has-match {
+      color: rgba(124, 232, 168, 0.6);
+    }
+
+    .search-status.error {
+      color: rgba(232, 124, 124, 0.6);
+    }
   </style>
 </head>
 
@@ -1005,9 +1144,8 @@
         <div class="fp-section-label">Search</div>
         <div class="search-wrap" id="search-wrap">
           <span class="search-delim">/</span>
-          <input type="text" class="search-input" id="search-input"
-                 placeholder="regex pattern" autocomplete="off"
-                 oninput="onSearchInput()" onkeydown="if(event.key==='Escape')clearSearch()">
+          <input type="text" class="search-input" id="search-input" placeholder="regex pattern" autocomplete="off"
+            oninput="onSearchInput()" onkeydown="if(event.key==='Escape')clearSearch()">
           <span class="search-delim">/i</span>
           <button class="search-clear-btn" id="search-clear" onclick="clearSearch()" style="display:none">✕</button>
         </div>
@@ -1026,13 +1164,27 @@
 
   <!-- ── TYPE LEGEND ── -->
   <div id="legend">
-    <div class="legend-item"><div class="legend-dot" style="background:#e87c8a;box-shadow:0 0 5px #e87c8a"></div>Person</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#7cb4e8;box-shadow:0 0 5px #7cb4e8"></div>Concept</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#7ce8a8;box-shadow:0 0 5px #7ce8a8"></div>Goal</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#e8c87c;box-shadow:0 0 5px #e8c87c"></div>Event</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#b47ce8;box-shadow:0 0 5px #b47ce8"></div>Place</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#e87cb4;box-shadow:0 0 5px #e87cb4"></div>Object</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#7090a4;box-shadow:0 0 5px #7090a4"></div>Other</div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#e87c8a;box-shadow:0 0 5px #e87c8a"></div>Person
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#7cb4e8;box-shadow:0 0 5px #7cb4e8"></div>Concept
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#7ce8a8;box-shadow:0 0 5px #7ce8a8"></div>Goal
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#e8c87c;box-shadow:0 0 5px #e8c87c"></div>Event
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#b47ce8;box-shadow:0 0 5px #b47ce8"></div>Place
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#e87cb4;box-shadow:0 0 5px #e87cb4"></div>Object
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#7090a4;box-shadow:0 0 5px #7090a4"></div>Other
+    </div>
   </div>
 
   <!-- ── ZOOM CONTROLS ── -->
@@ -1044,6 +1196,8 @@
     <button class="zoom-btn" title="Fit all" onclick="network.fit()">⛶</button>
     <div class="zoom-divider"></div>
     <button class="zoom-btn" id="physics-btn" title="Pause physics" onclick="togglePhysics()">⏸</button>
+    <div class="zoom-divider"></div>
+    <button class="zoom-btn" id="weight-btn" title="Toggle edge weights" onclick="toggleWeights()">≢</button>
   </div>
 
   <!-- ── LOADING ── -->
@@ -1101,6 +1255,27 @@
           <label class="form-label">Description</label>
           <textarea class="form-textarea" id="edit-description" placeholder="Full context and knowledge..."></textarea>
         </div>
+
+        <div class="form-field" id="wal-container" style="display:none; margin-top:20px;">
+          <label class="form-label">Pending Events (WAL)</label>
+          <div id="wal-events"
+            style="background: rgba(201,168,76,0.03); border: 1px dashed var(--gold-border); padding: 8px; font-size: 0.72rem; color: var(--text-muted); margin-bottom: 8px; max-height: 150px; overflow-y: auto;">
+          </div>
+          <button class="btn btn-ghost" id="consolidate-btn" onclick="forceConsolidate()"
+            style="font-size:0.6rem; padding: 6px;">Force Consolidate</button>
+        </div>
+
+        <div class="form-field" id="find-similar-container">
+          <button class="btn btn-ghost" id="find-similar-btn" onclick="findSimilar()"
+            style="font-size:0.65rem; padding: 8px; width: 100%;">Find Similar Concepts</button>
+        </div>
+
+        <div class="form-field" id="suggested-relations-container" style="display:none; margin-top:20px;">
+          <label class="form-label" style="color: var(--gold);">Suggested Relations</label>
+          <div id="suggested-relations-list"
+            style="background: rgba(201,168,76,0.03); border: 1px dashed var(--gold-border); border-radius: 3px; padding: 8px; font-size: 0.72rem; color: var(--text-muted); margin-bottom: 8px; max-height: 150px; overflow-y: auto;">
+          </div>
+        </div>
       </div>
 
       <!-- New relation fields -->
@@ -1109,19 +1284,20 @@
 
         <div class="form-field">
           <label class="form-label">From</label>
-          <input type="text" class="form-input" id="new-rel-source"
-                 list="subjects-list" placeholder="Subject name" autocomplete="off">
+          <input type="text" class="form-input" id="new-rel-source" list="subjects-list" placeholder="Subject name"
+            autocomplete="off">
         </div>
 
         <div class="form-field">
           <label class="form-label">To</label>
-          <input type="text" class="form-input" id="new-rel-target"
-                 list="subjects-list" placeholder="Subject name" autocomplete="off">
+          <input type="text" class="form-input" id="new-rel-target" list="subjects-list" placeholder="Subject name"
+            autocomplete="off">
         </div>
 
         <div class="form-field">
           <label class="form-label">Relationship Type</label>
-          <select class="form-select" id="new-rel-kind" onchange="toggleCustomKind('new-rel-custom-container', this.value)"></select>
+          <select class="form-select" id="new-rel-kind"
+            onchange="toggleCustomKind('new-rel-custom-container', this.value)"></select>
         </div>
 
         <div id="new-rel-custom-container" class="form-field" style="display:none">
@@ -1146,7 +1322,8 @@
 
         <div class="form-field">
           <label class="form-label">Relationship Type</label>
-          <select class="form-select" id="edge-kind" onchange="toggleCustomKind('edge-custom-container', this.value)"></select>
+          <select class="form-select" id="edge-kind"
+            onchange="toggleCustomKind('edge-custom-container', this.value)"></select>
         </div>
 
         <div id="edge-custom-container" class="form-field" style="display:none">
@@ -1187,7 +1364,8 @@
       <div class="modal-body">
         <div class="form-field">
           <label class="form-label">Relationship Type</label>
-          <select class="form-select" id="rel-kind-select" onchange="toggleCustomKind('custom-rel-container', this.value)"></select>
+          <select class="form-select" id="rel-kind-select"
+            onchange="toggleCustomKind('custom-rel-container', this.value)"></select>
         </div>
         <div id="custom-rel-container" class="form-field" style="display:none">
           <label class="form-label">Custom Type</label>

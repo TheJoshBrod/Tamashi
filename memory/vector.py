@@ -67,16 +67,22 @@ class QdrantMemoryStore:
         user_id: str,
         kind: str,
         name: str,
-        text: str,
+        summary: str = "",
         subject_type: str = "other",
+        description: str = "",
     ) -> None:
-        """Embed name+text and upsert a point keyed by node_id.
+        """Embed name+summary+description and upsert a point keyed by node_id.
 
         Uses a stable integer point ID derived from node_id so re-ingestion
         is idempotent (same subject → same point → overwrites instead of duplicating).
-        text should be the subject's summary (~200 chars).
         """
-        embed_text = f"{name}\n{text}" if text and text.strip() else name
+        parts = [name]
+        if summary and summary.strip():
+            parts.append(summary.strip())
+        if description and description.strip():
+            parts.append(description.strip())
+            
+        embed_text = "\n".join(parts)
         if not embed_text.strip():
             return
         try:
@@ -94,7 +100,8 @@ class QdrantMemoryStore:
                             "user_id": user_id,
                             "kind": kind,
                             "name": name,
-                            "summary": text,
+                            "summary": summary,
+                            "description": description,
                             "subject_type": subject_type,
                         },
                     )

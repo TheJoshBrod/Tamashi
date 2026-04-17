@@ -95,6 +95,62 @@ async def update_subject(jid: str, data: SubjectUpdate, user_id: str = "default_
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/api/memory/subjects/{jid}/consolidate")
+async def force_consolidate(jid: str, user_id: str = "default_user"):
+    """Manually trigger async consolidation/rewrite for a given subject."""
+    import asyncio
+    from memory.rewriter import rewrite_subject
+    
+    try:
+        # Resolve JID to Subject Name via SQLite store to save a Jac call
+        from memory.store import subject_store
+        subjects = subject_store.get_subjects(user_id, limit=1000)
+        subject_name = None
+        for s in subjects:
+            if s.get("jid") == jid:
+                subject_name = s.get("name")
+                break
+                
+        if not subject_name:
+            raise HTTPException(status_code=404, detail="Subject not found")
+
+        # Launch the rewriter task
+        asyncio.create_task(rewrite_subject(user_id, subject_name))
+        return {"status": "success", "message": "Consolidation task triggered"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/memory/subjects/{jid}/similar")
+async def find_similar_subjects(jid: str, user_id: str = "default_user"):
+    """Find semantically similar subjects using the vector store."""
+    try:
+        from memory.store import subject_store
+        from memory.vector import vector_store
+        
+        subjects = subject_store.get_subjects(user_id, limit=1000)
+        subject_data = None
+        for s in subjects:
+            if s.get("jid") == jid:
+                subject_data = s
+                break
+                
+        if not subject_data:
+            # Gracefully handle stale or disconnected nodes
+            return {"status": "success", "similar_jids": []}
+            
+        query_text = f"{subject_data['name']}\n{subject_data.get('summary', '')}\n{subject_data.get('description', '')}"
+        
+        results = vector_store.search_with_payload(user_id, query_text, k=6)
+        similar_jids = [r["node_id"] for r in results if str(r["node_id"]) != str(jid)]
+        
+        return {"status": "success", "similar_jids": similar_jids}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/api/memory/subjects/{jid}")
 async def delete_subject(jid: str, user_id: str = "default_user"):
     """Delete a subject across all layers."""

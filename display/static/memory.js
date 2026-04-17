@@ -14,6 +14,9 @@ let physicsEnabled = true;
 let _stabilizeTimeout = null;
 let hiddenTypes = new Set();
 let hiddenKinds = new Set();
+let showEdgeWeights = false;
+let isHoveringNode = false;
+let focusedNodeId = null;
 
 /* ── Type styling ─────────────────────────────────────────── */
 const TYPE_META = {
@@ -248,6 +251,121 @@ function initGraph() {
     setLoading(false);
     if (_stabilizeTimeout) clearTimeout(_stabilizeTimeout);
   });
+
+  network.on('selectNode', (params) => {
+    focusedNodeId = params.nodes[0];
+    updateIsolation();
+  });
+
+  network.on('deselectNode', (params) => {
+    focusedNodeId = null;
+    updateIsolation();
+  });
+
+  network.on('hoverNode', (params) => {
+    if (!focusedNodeId) {
+      isHoveringNode = true;
+      updateIsolation(params.node);
+    }
+  });
+
+  network.on('blurNode', (params) => {
+    if (!focusedNodeId) {
+      isHoveringNode = false;
+      updateIsolation();
+    }
+  });
+}
+
+function updateIsolation(hoverId = null) {
+  const focusCenter = focusedNodeId || hoverId;
+  if (!focusCenter) {
+    const nodeUpdates = [];
+    nodes.get().forEach(n => {
+      if (n.isolatedOpacity !== undefined) {
+        nodeUpdates.push({
+          id: n.id,
+          isolatedOpacity: undefined,
+          color: nodeColorFromType(n.subject?.subject_type?.toLowerCase() || 'other'),
+          font: { color: '#ece4d4' }
+        });
+      }
+    });
+    if (nodeUpdates.length) nodes.update(nodeUpdates);
+
+    const edgeUpdates = [];
+    edges.get().forEach(e => {
+      if (e.isolatedOpacity !== undefined) {
+        edgeUpdates.push({
+          id: e.id,
+          isolatedOpacity: undefined,
+          color: { color: 'rgba(201,168,76,0.18)' },
+          font: { color: 'rgba(201,168,76,0.55)' }
+        });
+      }
+    });
+    if (edgeUpdates.length) edges.update(edgeUpdates);
+    return;
+  }
+
+  const neighbors = network.getConnectedNodes(focusCenter);
+  const focusSet = new Set(neighbors);
+  focusSet.add(focusCenter);
+
+  const nodeUpdates = [];
+  nodes.get().forEach(n => {
+    const isFocused = focusSet.has(n.id);
+    const opacity = isFocused ? 1.0 : 0.15;
+    if (n.isolatedOpacity !== opacity) {
+      const type = n.subject?.subject_type?.toLowerCase() || 'other';
+      const c = nodeColorFromType(type);
+      c.opacity = opacity; // fallback if vis natively supports it
+
+      // also construct rgba colors to assure vis dims it
+      const rgbBg = hexToRgb(TYPE_META[type]?.bg || '#0c0e14');
+      const rgbBorder = hexToRgb(TYPE_META[type]?.border || '#7090a4');
+      if (rgbBg && rgbBorder) {
+        c.background = `rgba(${rgbBg.r}, ${rgbBg.g}, ${rgbBg.b}, ${opacity})`;
+        c.border = `rgba(${rgbBorder.r}, ${rgbBorder.g}, ${rgbBorder.b}, ${opacity})`;
+        c.hover = { background: c.background, border: c.border };
+        c.highlight = { background: c.background, border: c.border };
+      }
+
+      nodeUpdates.push({
+        id: n.id,
+        isolatedOpacity: opacity,
+        color: c,
+        font: { color: `rgba(236,228,212,${opacity})` }
+      });
+    }
+  });
+  if (nodeUpdates.length) nodes.update(nodeUpdates);
+
+  const edgeUpdates = [];
+  edges.get().forEach(e => {
+    const isFocused = (e.from === focusCenter || e.to === focusCenter);
+    const opacity = isFocused ? 1.0 : 0.05;
+    if (e.isolatedOpacity !== opacity) {
+      const c = isFocused ? 'rgba(201,168,76,0.75)' : 'rgba(201,168,76,0.05)';
+      const fontC = isFocused ? 'rgba(201,168,76,0.55)' : 'rgba(201,168,76,0.05)';
+      edgeUpdates.push({
+        id: e.id,
+        isolatedOpacity: opacity,
+        color: { color: c, opacity: opacity },
+        font: { color: fontC }
+      });
+    }
+  });
+  if (edgeUpdates.length) edges.update(edgeUpdates);
+}
+
+function hexToRgb(hex) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : null;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -298,8 +416,31 @@ async function refreshGraph({ focusName } = {}) {
         network.setOptions({ physics: { solver: 'forceAtlas2Based' } });
       }
 
+      const formattedEdges = [];
+      const edgeMap = new Map();
+
+      data.edges.forEach(e => {
+        const minNode = e.from < e.to ? e.from : e.to;
+        const maxNode = e.from < e.to ? e.to : e.from;
+        const key = `${minNode}|${maxNode}|${e.kind}`;
+
+        if (edgeMap.has(key)) {
+          const existing = edgeMap.get(key);
+          existing.isBidirectional = true;
+          existing.arrows = 'to, from';
+          existing.width = (existing.width || 1.4) * 1.5;
+        } else {
+          edgeMap.set(key, {
+            ...e,
+            width: showEdgeWeights ? Math.max(1.0, (e.weight || 1.0) * 1.8) : 1.4
+          });
+        }
+      });
+
+      edgeMap.forEach(e => formattedEdges.push(e));
+
       nodes.add(formattedNodes);
-      edges.add(data.edges);
+      edges.add(formattedEdges);
       document.getElementById('empty-state').style.display = 'none';
 
       populateFilterPanel();
@@ -479,6 +620,153 @@ async function apiDeleteRelation(edge, callback) {
   }
 }
 
+async function forceConsolidate() {
+  const jid = document.getElementById('edit-jid').value;
+  if (!jid) return;
+  setLoading(true);
+  try {
+    const res = await fetch(`/display/api/memory/subjects/${encodeURIComponent(jid)}/consolidate`, { method: 'POST' });
+    if (res.ok) {
+      showToast('Consolidation triggered!');
+      setTimeout(() => refreshGraph({ focusName: document.getElementById('edit-name').value }), 2500);
+    } else {
+      const err = await res.json();
+      showToast('Consolidation failed: ' + (err.detail || ''));
+    }
+  } catch (e) {
+    showToast('Consolidation error: ' + e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+/* ── Find Similar ─────────────────────────────────────────── */
+let suggestedEdgeIds = [];
+
+async function findSimilar() {
+  const jid = document.getElementById('edit-jid').value;
+  if (!jid) return;
+
+  const btn = document.getElementById('find-similar-btn');
+  const orgText = btn.textContent;
+  btn.textContent = 'Searching...';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(`/display/api/memory/subjects/${encodeURIComponent(jid)}/similar`);
+    if (res.ok) {
+      const data = await res.json();
+      renderSuggestedRelations(jid, data.similar_jids);
+    } else {
+      showToast('Failed to find similar subjects');
+    }
+  } catch (err) {
+    showToast('Search error: ' + err.message);
+  } finally {
+    btn.textContent = orgText;
+    btn.disabled = false;
+  }
+}
+
+function renderSuggestedRelations(sourceJid, similarJids) {
+  clearSuggestedRelations();
+
+  const container = document.getElementById('suggested-relations-container');
+  const list = document.getElementById('suggested-relations-list');
+  container.style.display = 'block';
+
+  if (!similarJids || similarJids.length === 0) {
+    list.innerHTML = '<div style="padding: 4px">No similar subjects found.</div>';
+    return;
+  }
+
+  const newEdges = [];
+  const htmlParts = [];
+
+  similarJids.forEach(tgtJid => {
+    const tgtNode = nodes.get(tgtJid);
+    if (!tgtNode) return;
+
+    // Check if edge already exists
+    const existingEdges = network.getConnectedEdges(sourceJid);
+    let alreadyConnected = false;
+    existingEdges.forEach(eid => {
+      const e = edges.get(eid);
+      if (e && ((e.from === sourceJid && e.to === tgtJid) || (e.from === tgtJid && e.to === sourceJid))) {
+        alreadyConnected = true;
+      }
+    });
+
+    if (alreadyConnected) return;
+
+    const edgeId = `suggest_${sourceJid}_${tgtJid}`;
+    suggestedEdgeIds.push(edgeId);
+
+    newEdges.push({
+      id: edgeId,
+      from: sourceJid,
+      to: tgtJid,
+      label: 'similar_to',
+      kind: 'similar_to',
+      dashes: true,
+      color: { color: 'rgba(124, 232, 168, 0.6)' },
+      font: { color: 'rgba(124, 232, 168, 0.8)' },
+      isSuggestion: true
+    });
+
+    htmlParts.push(`
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; padding-bottom:6px; border-bottom:1px solid rgba(201,168,76,0.1)">
+        <span style="font-size:0.75rem; color:var(--text);">${nodeName(tgtNode)}</span>
+        <div style="display:flex; gap: 4px;">
+          <button class="btn btn-ghost" style="padding:4px 8px; font-size:0.55rem; color:var(--success); border-color:rgba(124,232,168,0.3)" onclick="approveSuggestion(event, '${edgeId}', '${sourceJid}', '${tgtJid}')">Approve</button>
+          <button class="btn btn-ghost" style="padding:4px 8px; font-size:0.55rem; color:var(--danger); border-color:rgba(232,124,124,0.3)" onclick="dismissSuggestion(event, '${edgeId}')">Dismiss</button>
+        </div>
+      </div>
+    `);
+  });
+
+  if (htmlParts.length === 0) {
+    list.innerHTML = '<div style="padding: 4px">All similar subjects are already connected.</div>';
+    return;
+  }
+
+  edges.add(newEdges);
+  list.innerHTML = htmlParts.join('');
+}
+
+function clearSuggestedRelations() {
+  if (suggestedEdgeIds.length > 0) {
+    const toRemove = suggestedEdgeIds.filter(id => edges.get(id));
+    if (toRemove.length > 0) edges.remove(toRemove);
+    suggestedEdgeIds = [];
+  }
+  document.getElementById('suggested-relations-container').style.display = 'none';
+  document.getElementById('suggested-relations-list').innerHTML = '';
+}
+
+function dismissSuggestion(event, edgeId) {
+  if (edges.get(edgeId)) edges.remove(edgeId);
+  const row = event.target.closest('div').parentElement;
+  row.style.opacity = '0.3';
+  row.style.pointerEvents = 'none';
+}
+
+function approveSuggestion(event, edgeId, srcJid, tgtJid) {
+  const edgeData = edges.get(edgeId);
+  if (!edgeData) return;
+
+  const row = event.target.closest('div').parentElement;
+  row.style.opacity = '0.3';
+  row.style.pointerEvents = 'none';
+
+  // Create permanent relation via API
+  saveRelation({ from: srcJid, to: tgtJid }, 'similar_to', () => {
+    // The callback logic triggers a graph refresh!
+    // Just clear the overlay state
+    clearSuggestedRelations();
+  });
+}
+
 /* ═══════════════════════════════════════════════════════════
    SIDEBAR
    ═══════════════════════════════════════════════════════════ */
@@ -494,6 +782,18 @@ function showDetails(jid) {
   document.getElementById('edit-summary').value = s.summary || '';
   document.getElementById('edit-description').value = s.description || '';
   document.getElementById('edit-type').value = s.subject_type?.toLowerCase() || 'other';
+
+  const evts = s.recent_events || [];
+  if (evts.length > 0) {
+    document.getElementById('wal-container').style.display = 'block';
+    const container = document.getElementById('wal-events');
+    container.innerHTML = evts.map(e => `<div style="margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid rgba(201,168,76,0.18)">${e}</div>`).join('');
+  } else {
+    document.getElementById('wal-container').style.display = 'none';
+  }
+
+  // Clear suggestions on load
+  clearSuggestedRelations();
 
   document.getElementById('sb-mode').textContent = 'Editing Subject';
   document.getElementById('sb-title').textContent = s.name || 'Subject';
@@ -518,6 +818,8 @@ function createNewSubject() {
   document.getElementById('edit-description').value = '';
   document.getElementById('edit-type').value = 'person';
 
+  document.getElementById('wal-container').style.display = 'none';
+
   document.getElementById('sb-mode').textContent = 'New Subject';
   document.getElementById('sb-title').textContent = 'Untitled';
   document.getElementById('save-btn').textContent = 'Create Subject';
@@ -536,6 +838,7 @@ function createNewSubject() {
 
 function closeSidebar() {
   document.getElementById('sidebar').classList.remove('open');
+  clearSuggestedRelations();
   selectedNodeJid = null;
   selectedEdgeId = null;
   currentSidebarMode = 'node';
@@ -672,6 +975,22 @@ function togglePhysics() {
   const btn = document.getElementById('physics-btn');
   btn.textContent = physicsEnabled ? '⏸' : '▶';
   btn.title = physicsEnabled ? 'Pause physics' : 'Resume physics';
+}
+
+function toggleWeights() {
+  showEdgeWeights = !showEdgeWeights;
+  const btn = document.getElementById('weight-btn');
+  if (btn) btn.style.color = showEdgeWeights ? 'var(--gold)' : '';
+
+  const edgeUpdates = [];
+  edges.get().forEach(e => {
+    const rawWeight = e.weight || 1.0;
+    const w = showEdgeWeights ? Math.max(1.0, rawWeight * 1.8) : 1.4;
+    if (e.width !== w) {
+      edgeUpdates.push({ id: e.id, width: w });
+    }
+  });
+  if (edgeUpdates.length) edges.update(edgeUpdates);
 }
 
 function toggleFab() {
