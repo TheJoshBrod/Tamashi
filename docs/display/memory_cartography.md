@@ -1,21 +1,8 @@
-# Display & Dashboard
-
-Tamashi ships a built-in web dashboard served under `/display/`. It has two views: the live emotion dashboard and the memory graph editor.
-
----
-
-## Routes
-
-| Route | Description |
-|-------|-------------|
-| `GET /display/` | Emotion dashboard — real-time animated face driven by the EventBus |
-| `GET /display/memory` | Memory graph editor — full-screen interactive graph of all Subjects and Relations |
-
----
-
-## Memory Graph UI
+# Memory Graph UI
 
 A full-screen, immersive visualization of the user's long-term memory graph. Features specialized controls for managing complex knowledge structures.
+
+Available at `localhost:8000/display/memory`.
 
 ### Top Bar & Stats
 
@@ -105,27 +92,4 @@ The Memory Graph uses `vis.js` and is highly optimized to handle up to 500 nodes
 
 ---
 
-## Topology Testing Scripts
-
-There are several helper scripts included in the `scripts/` directory to stress-test layout generation, rendering metrics, and UI interactivity. Each script interacts directly with the running REST API (`http://localhost:8000/display/api/memory`), ensuring real-time graphical updates without a backend restart.
-
-| Script | Purpose | Description |
-|--------|---------|-------------|
-| `delete_temp_nodes.py` | Graph Cleanup | Purges all nodes prefixed with `Node_` in both the Active API and databases. |
-| `populate_giant_web.py`| Load Testing | Generates 200 nodes and 400 random connections. |
-| `populate_tree.py`     | Determinism   | Generates a deeply nested, multi-branch hierarchical topography. |
-| `populate_clusters.py` | Gravity Testing | Generates completely disconnected islands to test force repulsion without cross-edges. |
-| `populate_hub.py`      | Bottlenecks   | Generates 3 massive "star" nodes connected to hundreds of isolated leaf nodes to test gravitational pull. |
-| `populate_isolated.py` | Unconnected   | Generates 100 perfectly isolated nodes with 0 edges to test standalone float behavior. |
-
----
-
-## Emotion Dashboard
-
-`localhost:8000/display/`
-
-Displays an animated avatar face whose state is driven by the `EmotionManager` via WebSocket. For details on how emotions map to UI states and how to add new ones, see the [Extension Guide](extending_tamashi.md) and [Implementation Details](implementation.md).
-
----
-
-[← Back to Documentation Hub](README.md)
+[← Back to Documentation Hub](../README.md)
