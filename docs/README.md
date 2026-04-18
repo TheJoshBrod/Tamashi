@@ -18,7 +18,7 @@ A practical guide for adding new capabilities. Learn how to register global tool
 The web dashboard at `/display/`. Covers the emotion avatar UI and the memory graph editor — how to navigate, create/edit subjects and relations, and the REST API backing the graph view.
 
 ### [Memory Architecture](memory.md)
-How the hybrid dual-store memory system works: FIFO working buffer, Jac graph long-term store, Qdrant vector index, GraphRAG retrieval, and the continuous event-driven Subject Rewriter agent.
+How the hybrid dual-store memory system works: FIFO working buffer, Jac graph long-term store, Qdrant vector index, confidence-weighted GraphRAG retrieval, the continuous event-driven Subject Rewriter agent, and the background Macroscopic Reflection loop.
 
 ---
 [← Back to Project Home](../README.md)

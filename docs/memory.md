@@ -94,8 +94,8 @@ Configured via `settings.extraction_model` (default `anthropic/claude-haiku-4-5-
 
 When called with a query:
 
-1.  **Vector Search**: Search Qdrant for the top 5 `node_id`s (JIDs) matching the query.
-2.  **Walker Expansion**: Spawn the `RetrieveBySubjectJids` walker. It retrieves the seed subjects AND their 1-hop neighbors via `Relates` edges.
+1.  **Vector Search**: Search Qdrant for the top 5 `node_id`s (JIDs) matching the query (including similarity scores).
+2.  **Walker Expansion**: Spawn the `RetrieveBySubjectJids` walker. It retrieves the seed subjects AND their 1-hop neighbors via `Relates` edges. Edge weights are multiplied by semantic similarity scores to naturally promote highly reinforced connections over hallucinated facts.
 3.  **Fallback**: If no vector matches are found (or no query provided), fall back to `RetrieveSubjects` (naive most-recent-first, up to `max_subjects`).
 4.  **Return value**: Formatted as `Relevant memory:\n- Name: summary` — the tool returns this string directly to the agent.
 
@@ -106,8 +106,18 @@ When called with a query:
 The system uses an event-driven, WAL-threshold architecture instead of a nightly batch job. When `bridge.ingest_subjects` reports that a Subject's `recent_events` log has reached the `subject_wal_threshold`, an async `rewrite_subject` task is launched.
 
 1. **Context Assembly**: The `GetSubjectContext` walker retrieves 1-hop inbound/outbound relations, and Qdrant spots unlinked semantic neighbors.
-2. **LLM Synthesis**: The rewriter model (`settings.rewriter_model`) receives the current summary/description, pending WAL facts, and neighbor relationships, producing a JSON blueprint of updated descriptions and edge mutations.
-3. **Graph Update**: `ClearSubjectWAL`, `DeleteRelates`/`IngestSubjects` modify the Jac Graph & SQLite layer, followed by a Qdrant idempotent upsert re-embedding the graph subject.
+2. **LLM Synthesis**: The rewriter model (`settings.rewriter_model`) receives the current summary/description, pending WAL facts, and neighbor relationships. It produces a JSON blueprint of updated descriptions and edge mutations, including a **Confidence/Resonance Score (0.0 to 1.0)** for each proposed edge to represent certainty that the relation is accurate and lasting.
+3. **Graph Update**: `ClearSubjectWAL`, `DeleteRelates`/`IngestSubjects` modify the Jac Graph & SQLite layer (saving the confidence score as the edge `weight`), followed by a Qdrant idempotent upsert re-embedding the graph subject.
+
+---
+
+## Macroscopic Pattern Synthesis (Reflection Loop)
+
+Instead of only triggering reactive updates to single Subjects, Tamashi runs a scheduled background "Reflection" loop designed to look across the entire working dataset (comparable to "Dreaming" or REM Sleep).
+
+1. **Temporal Querying**: Periodically (`reflection_interval_seconds`) queries the SQLite store for the top 20 most actively modified Subjects within a trailing 7-day window.
+2. **Cross-Pollination Agent**: Dispatches an LLM payload containing the summaries of these disparate active subjects, alongside the existing vocabulary of concepts.
+3. **Concept Spawning**: The analyzer LLM identifies broad macro-themes or goals emerging across the active nodes. It natively spawns new `Concept` or `Goal` Subjects that explicitly tie these local nodes together via new `Relates` edges.
 
 ---
 
@@ -129,6 +139,10 @@ All settings live in `core/config.py` (overridable via `.env`):
 | `rewriter_model` | `anthropic/claude-haiku-4-5-20251001` | Model used by the Subject Rewriter |
 | `rewriter_neighbor_k` | `5` | Semantic neighbor candidates surfaced to the rewriter |
 | `rewriter_max_concurrent` | `3` | Max parallel rewrite LLM calls (global semaphore) |
+| `reflection_enabled` | `True` | Master switch for the macro-pattern reflection loop |
+| `reflection_interval_seconds` | `3600` | How often the background reflection loop wakes up |
+| `reflection_window_days` | `7` | Trailing days window to query for historically active subjects |
+| `reflection_subject_limit` | `20` | Max count of active subjects to analyze per reflection cycle |
 
 ---
 
