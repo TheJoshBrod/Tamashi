@@ -214,7 +214,7 @@ walker DeleteSubject {
     }
 }
 
-# Retrieve full context for a subject: its data + 1-hop outbound neighbors.
+# Retrieve full context for a subject: its data + 1-hop inbound and outbound neighbors.
 walker GetSubjectContext {
     has name: str;
 
@@ -228,7 +228,16 @@ walker GetSubjectContext {
                     neighbors.append({
                         "name": nbr.name,
                         "summary": nbr.summary,
-                        "subject_type": nbr.subject_type
+                        "subject_type": nbr.subject_type,
+                        "direction": "outbound"
+                    });
+                }
+                for nbr in [sub<--][?:Subject] {
+                    neighbors.append({
+                        "name": nbr.name,
+                        "summary": nbr.summary,
+                        "subject_type": nbr.subject_type,
+                        "direction": "inbound"
                     });
                 }
                 report {

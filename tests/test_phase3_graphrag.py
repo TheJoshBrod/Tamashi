@@ -6,7 +6,6 @@ Run with: python -m pytest tests/test_phase3_graphrag.py -v
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import random
 
@@ -240,32 +239,7 @@ def test_retrieve_by_subject_jids_expands_neighbors(isolated_store):
 
 
 # ---------------------------------------------------------------------------
-# Tests 9-10 — Nightly linker (memory/linker.py) — now a no-op
-# ---------------------------------------------------------------------------
-
-def test_linker_is_noop(isolated_store):
-    """run_linker is a no-op in Phase 3 — completes without error."""
-    from memory.linker import run_linker
-    import memory.bridge as bridge_mod
-
-    user_a = _uid("linker_noop")
-    bridge_mod.ingest_subjects(user_a, SAMPLE_SUBJECTS[:2], [])
-
-    # Should complete without raising
-    asyncio.run(run_linker())
-
-
-def test_linker_disabled_when_long_term_memory_off(monkeypatch):
-    """run_linker respects long_term_memory_enabled=False indirectly (no-op either way)."""
-    from core.config import settings
-    from memory.linker import run_linker
-
-    monkeypatch.setattr(settings, "long_term_memory_enabled", False)
-    asyncio.run(run_linker())  # Must not raise
-
-
-# ---------------------------------------------------------------------------
-# Test 11 — SubjectStore.list_users (memory/store.py)
+# Test 9 — SubjectStore.list_users (memory/store.py)
 # ---------------------------------------------------------------------------
 
 def test_subject_store_list_users(isolated_store):

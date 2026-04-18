@@ -32,25 +32,6 @@ async def startup_event():
     from display.websocket import manager
     manager.start_heartbeat()
 
-    # Phase 3: nightly linker — draws RelatesTo edges between similar Facts
-    if settings.long_term_memory_enabled:
-        try:
-            from apscheduler.schedulers.asyncio import AsyncIOScheduler
-            from memory.linker import run_linker
-            scheduler = AsyncIOScheduler()
-            scheduler.add_job(run_linker, "cron", hour=3, minute=0)
-            scheduler.start()
-            app.state.scheduler = scheduler
-        except ImportError:
-            pass  # apscheduler not installed — linker disabled, retrieval still works
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    scheduler = getattr(app.state, "scheduler", None)
-    if scheduler is not None:
-        scheduler.shutdown(wait=False)
-
 
 @app.get("/health")
 def health() -> dict:

@@ -61,7 +61,7 @@ Jac library mode is **in-memory only** — graph state does not survive process 
 - **Subjects**: Stored in `memory_subjects` table.
 - **Relations**: Stored in `memory_relations` table.
 
-On first access for a user after restart, `bridge._ensure_loaded()` reloads their subjects and relations from SQLite back into the Jac graph.
+On first access for a user after restart, `bridge._ensure_loaded()` reloads their subjects from SQLite back into the Jac graph via the `LoadSubjects` walker. **`Relates` edges are not reloaded** — they are read directly from SQLite when needed (graph UI, rewriter context). The Jac graph only rebuilds edges as new facts are consolidated during active use.
 
 ---
 
@@ -75,9 +75,11 @@ agent reply sent  ← Orchestrator.handle_stream
             ├── store.get_unconsolidated(...)
             ├── bridge.lookup_vocabulary(...)          # Vector search for existing subjects
             ├── extractor.extract_subjects(messages, vocab) # LiteLLM JSON mode
-            ├── bridge.ingest_subjects(session_id, facts)   # Jac + SQLite
+            ├── bridge.ingest_subjects(session_id, facts)   # Jac + SQLite (returns needs_rewrite)
             ├── vector_store.upsert(node_id, ...)           # Qdrant (NEW subjects only)
-            └── store.mark_consolidated(session_id, cutoff_id)
+            ├── for name in needs_rewrite:                  # Async Subject Rewriter trigger
+            │     asyncio.create_task(rewrite_subject(user_id, name))
+            └── store.mark_consolidated(session_id, cutoff_id)  # only if vector writes succeeded
 ```
 
 ### Extraction model
@@ -88,18 +90,24 @@ Configured via `settings.extraction_model` (default `anthropic/claude-haiku-4-5-
 
 ## GraphRAG Retrieval
 
-`bridge.retrieve_context(user_id, query)` runs on every LLM call:
+`bridge.retrieve_context(user_id, query)` is exposed as the `search_memory` **agent tool** (`tools/memory_search.py`). The LLM invokes it on demand when it needs context — it is **not** called automatically on every turn.
+
+When called with a query:
 
 1.  **Vector Search**: Search Qdrant for the top 5 `node_id`s (JIDs) matching the query.
 2.  **Walker Expansion**: Spawn the `RetrieveBySubjectJids` walker. It retrieves the seed subjects AND their 1-hop neighbors via `Relates` edges.
-3.  **Fallback**: If no vector matches are found, it falls back to `RetrieveSubjects` (naive most-recent-first).
-4.  **Injection**: Formats results as `Relevant memory:\n- Subject: Summary` and injects them into the system prompt.
+3.  **Fallback**: If no vector matches are found (or no query provided), fall back to `RetrieveSubjects` (naive most-recent-first, up to `max_subjects`).
+4.  **Return value**: Formatted as `Relevant memory:\n- Name: summary` — the tool returns this string directly to the agent.
 
 ---
 
-## Nightly Linker
+## Subject Rewriter (Memory Maintainer)
 
-`memory/linker.py::run_linker()` is currently a **no-op stub** in Phase 3. Semantic linking between subjects based on cosine similarity is planned for **Phase 5** as part of a larger memory rewriter/summarizer task.
+The system uses an event-driven, WAL-threshold architecture instead of a nightly batch job. When `bridge.ingest_subjects` reports that a Subject's `recent_events` log has reached the `subject_wal_threshold`, an async `rewrite_subject` task is launched.
+
+1. **Context Assembly**: The `GetSubjectContext` walker retrieves 1-hop inbound/outbound relations, and Qdrant spots unlinked semantic neighbors.
+2. **LLM Synthesis**: The rewriter model (`settings.rewriter_model`) receives the current summary/description, pending WAL facts, and neighbor relationships, producing a JSON blueprint of updated descriptions and edge mutations.
+3. **Graph Update**: `ClearSubjectWAL`, `DeleteRelates`/`IngestSubjects` modify the Jac Graph & SQLite layer, followed by a Qdrant idempotent upsert re-embedding the graph subject.
 
 ---
 
@@ -115,8 +123,12 @@ All settings live in `core/config.py` (overridable via `.env`):
 | `memory_context_token_budget` | `1500` | Max tokens injected from memory |
 | `vector_db_path` | `memory/qdrant/` | Local Qdrant storage directory |
 | `subject_collection` | `tamashi_subjects` | Qdrant collection name |
-| `subject_wal_threshold` | `5` | Turns before a subject's description is summarized |
+| `subject_wal_threshold` | `5` | WAL depth that triggers a Subject Rewriter run |
+| `subject_vocabulary_k` | `10` | Subjects returned by vocabulary injection vector search |
 | `allowed_relation_kinds` | `[...]` | List of valid strings for `Relates.kind` |
+| `rewriter_model` | `anthropic/claude-haiku-4-5-20251001` | Model used by the Subject Rewriter |
+| `rewriter_neighbor_k` | `5` | Semantic neighbor candidates surfaced to the rewriter |
+| `rewriter_max_concurrent` | `3` | Max parallel rewrite LLM calls (global semaphore) |
 
 ---
 
@@ -134,9 +146,9 @@ Established basic Jac graph interop and FastAPI integration.
 ### Phase 3 — GraphRAG + Qdrant (Complete)
 Moved to entity-centric **Subjects**. Implemented vector-seeded GraphRAG and vocabulary-injected extraction.
 
-### Phase 4 — Optimized Read Path (In Progress)
+### Phase 4 — Optimized Read Path (Complete)
 Refining semantic search and multi-hop traversal limits.
 
-### Phase 5 — Subject Rewriter (Planned)
-Implementation of the nightly linker and a description summarizer that triggers when the `recent_events` WAL hits the `subject_wal_threshold`.
+### Phase 5 — Subject Rewriter (Complete)
+Implemented an asynchronous "Memory Maintainer" that automatically summarizes descriptions and recalculates graph ties when a subject's `recent_events` WAL hits `subject_wal_threshold`, fully removing the legacy scheduled nightly job.
 

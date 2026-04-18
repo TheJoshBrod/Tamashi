@@ -145,6 +145,56 @@ class SubjectStore:
                 (json.dumps(recent_events), user_id, name),
             )
 
+    def get_subject_by_jid(self, user_id: str, jid: str) -> dict | None:
+        """Return a single subject by node_jid, or None if not found."""
+        with self._conn() as con:
+            row = con.execute(
+                """
+                SELECT name, summary, description, subject_type, recent_events,
+                       node_jid, created_at, updated_at
+                FROM memory_subjects
+                WHERE user_id = ? AND node_jid = ?
+                """,
+                (user_id, jid),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "name": row["name"],
+            "summary": row["summary"],
+            "description": row["description"],
+            "subject_type": row["subject_type"],
+            "recent_events": json.loads(row["recent_events"]),
+            "jid": row["node_jid"],
+            "created_at": row["created_at"] or "",
+            "updated_at": row["updated_at"] or "",
+        }
+
+    def get_subject_by_name(self, user_id: str, name: str) -> dict | None:
+        """Return a single subject by name, or None if not found."""
+        with self._conn() as con:
+            row = con.execute(
+                """
+                SELECT name, summary, description, subject_type, recent_events,
+                       node_jid, created_at, updated_at
+                FROM memory_subjects
+                WHERE user_id = ? AND name = ?
+                """,
+                (user_id, name),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "name": row["name"],
+            "summary": row["summary"],
+            "description": row["description"],
+            "subject_type": row["subject_type"],
+            "recent_events": json.loads(row["recent_events"]),
+            "jid": row["node_jid"],
+            "created_at": row["created_at"] or "",
+            "updated_at": row["updated_at"] or "",
+        }
+
     def has_user(self, user_id: str) -> bool:
         with self._conn() as con:
             row = con.execute(
@@ -153,7 +203,7 @@ class SubjectStore:
         return row is not None
 
     def list_users(self) -> list[str]:
-        """Return all user_ids with stored subjects. Used by the nightly linker."""
+        """Return all user_ids with stored subjects."""
         with self._conn() as con:
             rows = con.execute(
                 "SELECT DISTINCT user_id FROM memory_subjects"

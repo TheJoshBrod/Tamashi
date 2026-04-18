@@ -57,6 +57,11 @@ class Settings(BaseSettings):
         "related_to", "mentions",
     ]
 
+    # --- rewriter config ---
+    rewriter_model: str = "anthropic/claude-haiku-4-5-20251001"
+    rewriter_neighbor_k: int = 5
+    rewriter_max_concurrent: int = 3
+
     def model_post_init(self, __context: Any) -> None:
         yaml_data = _load_yaml()
         for key, val in yaml_data.items():

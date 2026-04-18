@@ -8,28 +8,43 @@ Architecture:
 Write path:
   ingest_subjects → Jac graph (in-process) + SQLite (durable) + Qdrant (vector index)
 
-Read path (Phase 3 stub — full read path in Phase 4):
-  retrieve_context returns "" until Phase 4 rewrites the read path.
+Read path:
+  retrieve_context is exposed as the search_memory agent tool; called on demand.
 
 Swapping the graph backend only requires changing this module.
 """
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from core.config import settings
 from jaclang.lib import spawn, root
 
-from memory.walkers import (
-    GetOrCreateUser, IngestSubjects, LoadSubjects, RetrieveSubjects,
-    GetSubjectContext, ClearSubjectWAL, DeleteRelates,
-)
 from memory.store import subject_store
+from memory.vector import vector_store
+from memory.walkers import (
+    ClearSubjectWAL,
+    DeleteRelates,
+    DeleteSubject,
+    GetOrCreateUser,
+    GetSubjectContext,
+    IngestSubjects,
+    LoadSubjects,
+    RetrieveBySubjectJids,
+    RetrieveFullGraph,
+    RetrieveSubjects,
+    UpdateSubject,
+)
 
 log = logging.getLogger(__name__)
 
 # Track which user_ids have been loaded into the in-process Jac graph.
 _loaded_users: set[str] = set()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _get_user_node(user_id: str):
@@ -105,8 +120,7 @@ def ingest_subjects(
             }
 
     deduped = list(merged.values())
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
+    now = _now_iso()
 
     result = spawn(IngestSubjects(subjects=deduped, relations=relations, now=now), user_node)
 
@@ -165,7 +179,6 @@ def lookup_vocabulary(
     if k is None:
         k = settings.subject_vocabulary_k
     try:
-        from memory.vector import vector_store
         results = vector_store.search_with_payload(user_id, conversation_text, k=k)
         vocab = []
         for r in results:
@@ -184,9 +197,9 @@ def lookup_vocabulary(
 def retrieve_context(user_id: str, query: str = "", max_subjects: int = 10) -> str:
     """Return a formatted memory block for the LLM prompt.
 
-    Phase 3 stub: returns basic subject summaries via naive graph retrieval.
-    Full GraphRAG read path (RetrieveBySubjectJids + markdown formatter) is Phase 4.
-    Returns "" if no subjects are stored yet.
+    Vector-seeded GraphRAG: searches Qdrant for seed subjects, then expands via
+    1-hop Jac graph traversal. Falls back to naive subject listing if no vector
+    matches. Returns "" if memory is disabled or graph is empty.
     """
     if not settings.long_term_memory_enabled:
         return ""
@@ -194,17 +207,14 @@ def retrieve_context(user_id: str, query: str = "", max_subjects: int = 10) -> s
         _ensure_loaded(user_id)
         user_node = _get_user_node(user_id)
 
-        # Phase 3: try vector search, fall back to naive graph retrieval.
         seed_jids: list[str] = []
         if query:
             try:
-                from memory.vector import vector_store
                 seed_jids = vector_store.search(user_id, query, k=5)
             except Exception:
                 pass
 
         if seed_jids:
-            from memory.walkers import RetrieveBySubjectJids
             result = spawn(RetrieveBySubjectJids(seed_jids=seed_jids), user_node)
         else:
             result = spawn(RetrieveSubjects(max_subjects=max_subjects), user_node)
@@ -238,7 +248,6 @@ def get_full_graph(user_id: str) -> dict:
     user_node = _get_user_node(user_id)
     
     # 1. Get nodes from Jac graph
-    from memory.walkers import RetrieveFullGraph
     result = spawn(RetrieveFullGraph(), user_node)
     nodes = [n for n in result.reports if isinstance(n, dict)]
     
@@ -293,10 +302,7 @@ def update_subject(
     }
     
     # 1. Jac Graph
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
-    from memory.walkers import UpdateSubject
-    result = spawn(UpdateSubject(jid=jid, data=data, now=now), user_node)
+    result = spawn(UpdateSubject(jid=jid, data=data, now=_now_iso()), user_node)
     if not result.reports or result.reports[0].get("status") != "success":
         return {"status": "error", "message": "Failed to update Jac node"}
 
@@ -316,7 +322,6 @@ def update_subject(
     
     # 3. Qdrant: Always upsert to update summary/embedding
     try:
-        from memory.vector import vector_store
         vector_store.upsert(jid, user_id, "subject", name, summary=summary, subject_type=subject_type, description=description)
     except Exception:
         log.warning("vector upsert failed during manual update")
@@ -326,38 +331,25 @@ def update_subject(
 
 def delete_subject(user_id: str, jid: str) -> dict:
     """Delete a subject across all 3 layers."""
-    _ensure_loaded(user_id)
-    user_node = _get_user_node(user_id)
-    
-    # Use RetrieveSubjects to find the name first (needed for SQLite cleanup)
-    # Actually, we can just find the node in Jac.
-    from memory.walkers import RetrieveSubjects
-    probe = spawn(RetrieveSubjects(max_subjects=1000), user_node)
-    subject_name = None
-    for r in probe.reports:
-        if r.get("jid") == jid:
-            subject_name = r.get("name")
-            break
-            
-    if not subject_name:
+    meta = subject_store.get_subject_by_jid(user_id, jid)
+    if not meta:
         return {"status": "error", "message": "Subject not found"}
 
+    _ensure_loaded(user_id)
+    user_node = _get_user_node(user_id)
+
     # 1. Jac Graph
-    from memory.walkers import DeleteSubject
     spawn(DeleteSubject(jid=jid), user_node)
 
     # 2. SQLite
-    subject_store.delete_subject(user_id, subject_name)
-    
+    subject_store.delete_subject(user_id, meta["name"])
+
     # 3. Qdrant
     try:
-        # Need a vector_store.delete(jid) method! 
-        # For now, it's fine if it stays in Qdrant but is gone from Graph, 
-        # but let's try to add delete to vector.py later.
-        pass
+        vector_store.delete(jid)
     except Exception:
-        pass
-        
+        log.warning("vector delete failed for %r", jid)
+
     return {"status": "success", "jid": jid}
 
 
@@ -393,7 +385,11 @@ def get_subject_context(user_id: str, name: str) -> dict | None:
     enriched_neighbors = []
     for nbr in raw.get("neighbors", []):
         nbr_name = nbr["name"]
-        kinds = rel_lookup.get((name, nbr_name), [])
+        direction = nbr.get("direction", "outbound")
+        if direction == "inbound":
+            kinds = rel_lookup.get((nbr_name, name), [])
+        else:
+            kinds = rel_lookup.get((name, nbr_name), [])
         enriched_neighbors.append({
             **nbr,
             "edge_kind": kinds[0] if kinds else "related_to",
@@ -427,34 +423,23 @@ def apply_rewrite(
     _ensure_loaded(user_id)
     user_node = _get_user_node(user_id)
 
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
-
     # 1. Update Jac in-memory graph (clears WAL + writes new summary/description)
     result = spawn(ClearSubjectWAL(
         name=name,
         new_summary=new_summary,
         new_description=new_description,
-        now=now,
+        now=_now_iso(),
     ), user_node)
 
     jid_str: str | None = None
     if result.reports and result.reports[0].get("status") == "success":
         jid_str = str(result.reports[0].get("jid", ""))
 
-    # 2. Determine subject_type (needed for SQLite upsert and Qdrant)
-    subject_type = "other"
-    if not jid_str:
-        for s in subject_store.get_subjects(user_id, limit=1000):
-            if s["name"] == name:
-                subject_type = s["subject_type"]
-                jid_str = s.get("jid")
-                break
-    else:
-        for s in subject_store.get_subjects(user_id, limit=1000):
-            if s["name"] == name:
-                subject_type = s["subject_type"]
-                break
+    # 2. Look up subject metadata for SQLite upsert and Qdrant re-embed
+    meta = subject_store.get_subject_by_name(user_id, name)
+    subject_type = meta["subject_type"] if meta else "other"
+    if not jid_str and meta:
+        jid_str = meta.get("jid")
 
     # 3. Persist updated subject to SQLite (clears WAL)
     subject_store.upsert_subject(
@@ -482,7 +467,6 @@ def apply_rewrite(
     # 6. Re-embed in Qdrant (idempotent via stable node_id hash)
     if jid_str:
         try:
-            from memory.vector import vector_store
             vector_store.upsert(jid_str, user_id, "subject", name, summary=new_summary, subject_type=subject_type, description=new_description)
         except Exception:
             log.warning("vector upsert failed during apply_rewrite for %r", name)
@@ -505,14 +489,12 @@ def delete_relation(user_id: str, src_name: str, kind: str, tgt_name: str) -> di
         r["kind"] for r in remaining
         if r["src_name"] == src_name and r["tgt_name"] == tgt_name
     ]
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
     spawn(DeleteRelates(
         source_name=src_name,
         kind=kind,
         target_name=tgt_name,
         keep_kinds=keep_kinds,
-        now=now,
+        now=_now_iso(),
     ), user_node)
 
     return {"status": "success"}
