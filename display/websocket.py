@@ -50,6 +50,10 @@ class ConnectionManager:
         self._last_detail = detail
         await self._send_all({"type": "state", "state": state.value, "detail": detail})
 
+    async def broadcast_custom(self, payload: dict) -> None:
+        """Broadcast arbitrary JSON directly to all clients."""
+        await self._send_all(payload)
+
     async def _send_all(self, payload: dict) -> None:
         """Send a JSON payload to all connections, pruning any dead ones."""
         message = json.dumps(payload)

@@ -1434,3 +1434,53 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
+/* ═══════════════════════════════════════════════════════════
+   WEBSOCKET NODE HIGHLIGHTING
+   ═══════════════════════════════════════════════════════════ */
+const graphWs = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/display/ws`);
+
+let highlightTimeouts = {};
+let originalColors = {};
+
+function highlightNode(name, isActive) {
+  const target = nodes.get().find(n => n.label === name);
+  if (!target) return;
+
+  if (isActive) {
+    if (!originalColors[target.id]) {
+      originalColors[target.id] = target.color;
+    }
+    nodes.update({
+      id: target.id,
+      color: { background: '#f39c12', border: '#e67e22', highlight: { border: '#e67e22', background: '#f39c12' } },
+      borderWidth: 4
+    });
+
+    if (highlightTimeouts[target.id]) clearTimeout(highlightTimeouts[target.id]);
+    highlightTimeouts[target.id] = setTimeout(() => {
+      highlightNode(name, false);
+    }, 30000);
+  } else {
+    if (highlightTimeouts[target.id]) clearTimeout(highlightTimeouts[target.id]);
+    if (originalColors[target.id]) {
+      nodes.update({
+        id: target.id,
+        color: originalColors[target.id],
+        borderWidth: 2
+      });
+      delete originalColors[target.id];
+    }
+  }
+}
+
+graphWs.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.type === 'node_active') {
+    highlightNode(data.name, true);
+  } else if (data.type === 'node_inactive') {
+    highlightNode(data.name, false);
+  }
+};
+
+graphWs.onerror = (err) => console.error('Graph WebSocket error:', err);

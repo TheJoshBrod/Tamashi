@@ -18,7 +18,9 @@ const stateLabels = {
     success: 'Done!',
     confused: 'Hmm...',
     error: 'Oops!',
-    nutrition: 'Nutrition Mode'
+    nutrition: 'Nutrition Mode',
+    groggy: 'Groggy...',
+    asleep: 'Zzzz...'
 };
 
 function resetStaleTimer() {
@@ -44,6 +46,10 @@ function connect() {
         const data = JSON.parse(event.data);
         resetStaleTimer();
         if (data.type === 'ping') return;
+        if (data.type === 'dream') {
+            showThoughtBubble(data.snippet);
+            return;
+        }
         updateState(data.state, data.detail);
     };
 
@@ -57,6 +63,23 @@ function connect() {
         console.error('WebSocket error:', err);
         ws.close();
     };
+}
+
+function showThoughtBubble(text) {
+    let bubble = document.getElementById('thought-bubble');
+    if (!bubble) {
+        bubble = document.createElement('div');
+        bubble.id = 'thought-bubble';
+        bubble.className = 'thought-bubble';
+        document.body.appendChild(bubble);
+    }
+    bubble.textContent = text;
+    bubble.classList.add('visible');
+
+    if (bubble.fadeTimeout) clearTimeout(bubble.fadeTimeout);
+    bubble.fadeTimeout = setTimeout(() => {
+        bubble.classList.remove('visible');
+    }, 7000);
 }
 
 function updateState(state, detail) {

@@ -106,6 +106,19 @@ class EmotionManager:
             await self._push(EmotionState.ERROR, detail="Max iterations")
             self._schedule_idle()
 
+        elif kind == "MEMORY_DREAM":
+            if self._current_state == EmotionState.ASLEEP:
+                from display.websocket import manager
+                await manager.broadcast_custom({"type": "dream", "snippet": payload.get("dream_snippet")})
+
+        elif kind == "NODE_ACTIVE":
+            from display.websocket import manager
+            await manager.broadcast_custom({"type": "node_active", "name": payload.get("name")})
+
+        elif kind == "NODE_INACTIVE":
+            from display.websocket import manager
+            await manager.broadcast_custom({"type": "node_inactive", "name": payload.get("name")})
+
     async def _decide_reply_emotion(self, user_text: str, reply: str) -> EmotionState:
         """Return an emotion for the final reply, skipping the classifier for trivial text."""
         normalized = reply.strip().lower().rstrip(".!?")
@@ -186,7 +199,14 @@ class EmotionManager:
     async def _idle_after_delay(self) -> None:
         try:
             await asyncio.sleep(IDLE_DELAY_SECONDS)
-            await self._push(EmotionState.IDLE)
+            import datetime
+            hour = datetime.datetime.now().hour
+            if hour == 23:
+                await self._push(EmotionState.GROGGY)
+            elif 0 <= hour < 6:
+                await self._push(EmotionState.ASLEEP)
+            else:
+                await self._push(EmotionState.IDLE)
         except asyncio.CancelledError:
             pass  # a new event arrived; it owns the current display state
 

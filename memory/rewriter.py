@@ -73,7 +73,8 @@ def _build_prompt(subject: dict, neighbors: list[dict], semantic_nbrs: list[dict
   "summary": "string (<=200 chars, stable identity blurb)",
   "description": "string (rewritten, integrates new facts, drops stale ones)",
   "add_edges": [{"target": "existing-name", "kind": "one-of-allowed", "confidence": 0.0-1.0}],
-  "remove_edges": [{"target": "existing-name", "kind": "one-of-allowed"}]
+  "remove_edges": [{"target": "existing-name", "kind": "one-of-allowed"}],
+  "dream_snippet": "string (<=100 chars, internal monologue / whimsical observation about resolving these facts)"
 }""",
         "",
         "confidence is your certainty (0.0=uncertain, 1.0=definite) that the edge is accurate and lasting.",
@@ -140,6 +141,7 @@ def _validate_rewrite(raw: dict, valid_targets: set[str]) -> dict | None:
         "description": description,
         "add_edges": add_edges,
         "remove_edges": remove_edges,
+        "dream_snippet": raw.get("dream_snippet", ""),
     }
 
 
@@ -155,6 +157,12 @@ async def rewrite_subject(user_id: str, name: str) -> None:
 
     async with lock:
         try:
+            event_bus.emit({
+                "event": "NODE_ACTIVE",
+                "session_id": user_id,
+                "name": name,
+            })
+            
             from memory import bridge
 
             # 1. Load subject context (Jac graph)
@@ -224,9 +232,28 @@ async def rewrite_subject(user_id: str, name: str) -> None:
                 "edges_added": len(rewrite["add_edges"]),
                 "edges_removed": len(rewrite["remove_edges"]),
             })
+            
+            if rewrite.get("dream_snippet"):
+                event_bus.emit({
+                    "event": "MEMORY_DREAM",
+                    "session_id": user_id,
+                    "dream_snippet": rewrite["dream_snippet"],
+                })
+                
+            event_bus.emit({
+                "event": "NODE_INACTIVE",
+                "session_id": user_id,
+                "name": name,
+            })
+                
             log.info("rewrote subject %r for %s", name, user_id)
 
         except Exception:
+            event_bus.emit({
+                "event": "NODE_INACTIVE",
+                "session_id": user_id,
+                "name": name,
+            })
             event_bus.emit({
                 "event": "MEMORY_REWRITE_FAILED",
                 "session_id": user_id,

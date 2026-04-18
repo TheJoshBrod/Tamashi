@@ -17,6 +17,8 @@ class EmotionState(str, Enum):
     CONFUSED = "confused"
     ERROR = "error"
     NUTRITION = "nutrition"
+    GROGGY = "groggy"
+    ASLEEP = "asleep"
 
 
 class EventBus:
