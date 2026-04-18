@@ -31,6 +31,8 @@ async def startup_event():
     event_bus.set_main_loop(asyncio.get_running_loop())
     from display.websocket import manager
     manager.start_heartbeat()
+    from display.emotion_manager import emotion_manager
+    emotion_manager.start_clock()
     from memory.reflector import reflection_loop
     asyncio.create_task(reflection_loop())
 

@@ -210,5 +210,23 @@ class EmotionManager:
         except asyncio.CancelledError:
             pass  # a new event arrived; it owns the current display state
 
+    def start_clock(self) -> None:
+        asyncio.create_task(self._time_clock_loop())
+
+    async def _time_clock_loop(self) -> None:
+        import datetime
+        IDLE_LIKE = {EmotionState.IDLE, EmotionState.GROGGY, EmotionState.ASLEEP}
+        while True:
+            await asyncio.sleep(60)
+            if self._current_state not in IDLE_LIKE:
+                continue
+            hour = datetime.datetime.now().hour
+            if hour == 23 and self._current_state != EmotionState.GROGGY:
+                await self._push(EmotionState.GROGGY)
+            elif 0 <= hour < 6 and self._current_state != EmotionState.ASLEEP:
+                await self._push(EmotionState.ASLEEP)
+            elif 6 <= hour < 23 and self._current_state in {EmotionState.GROGGY, EmotionState.ASLEEP}:
+                await self._push(EmotionState.IDLE)
+
 
 emotion_manager = EmotionManager()
