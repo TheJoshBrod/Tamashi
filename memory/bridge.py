@@ -231,7 +231,6 @@ def retrieve_context(user_id: str, query: str = "", max_subjects: int = 10) -> s
             return ""
 
         if seed_results:
-            # Weighted GraphRAG: rank seeds by vector score, neighbors by seed_score × edge_weight.
             jid_to_name = {str(r.get("jid", "")): str(r.get("name", "")) for r in result.reports}
             seed_names_with_scores = {
                 jid_to_name[jid]: score
@@ -239,9 +238,11 @@ def retrieve_context(user_id: str, query: str = "", max_subjects: int = 10) -> s
                 if jid in jid_to_name
             }
             relations = subject_store.get_relations(user_id)
-            weight_lookup = {
-                (r["src_name"], r["tgt_name"]): r.get("weight", 1.0) for r in relations
-            }
+            # Max weight across all edge kinds between the same (src, tgt) pair.
+            weight_lookup: dict[tuple[str, str], float] = {}
+            for r in relations:
+                key = (r["src_name"], r["tgt_name"])
+                weight_lookup[key] = max(weight_lookup.get(key, 0.0), r.get("weight", 1.0))
 
             seen: set[str] = set()
             scored: list[tuple[float, dict]] = []

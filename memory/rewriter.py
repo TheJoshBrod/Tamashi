@@ -82,21 +82,26 @@ def _build_prompt(subject: dict, neighbors: list[dict], semantic_nbrs: list[dict
     return "\n".join(lines)
 
 
-def _call_llm(prompt: str) -> dict | None:
+def _call_json_llm(system: str, prompt: str, temperature: float = 0) -> dict | None:
+    """Call the configured LLM with JSON mode. Returns parsed dict or None on error."""
     try:
         resp = litellm.completion(
             model=settings.rewriter_model,
             messages=[
-                {"role": "system", "content": _REWRITE_SYSTEM},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             response_format={"type": "json_object"},
-            temperature=0,
+            temperature=temperature,
         )
         return json.loads(resp.choices[0].message.content)
     except Exception:
-        log.exception("rewriter LLM call failed")
+        log.exception("LLM call failed")
         return None
+
+
+def _call_llm(prompt: str) -> dict | None:
+    return _call_json_llm(_REWRITE_SYSTEM, prompt, temperature=0)
 
 
 def _validate_rewrite(raw: dict, valid_targets: set[str]) -> dict | None:

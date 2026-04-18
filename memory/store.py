@@ -78,6 +78,19 @@ class SubjectStore:
 
     # --- Subjects ---
 
+    @staticmethod
+    def _row_to_subject(r) -> dict:
+        return {
+            "name": r["name"],
+            "summary": r["summary"],
+            "description": r["description"],
+            "subject_type": r["subject_type"],
+            "recent_events": json.loads(r["recent_events"]),
+            "jid": r["node_jid"],
+            "created_at": r["created_at"] or "",
+            "updated_at": r["updated_at"] or "",
+        }
+
     def upsert_subject(
         self,
         user_id: str,
@@ -120,19 +133,7 @@ class SubjectStore:
                 """,
                 (user_id, limit),
             ).fetchall()
-        return [
-            {
-                "name": r["name"],
-                "summary": r["summary"],
-                "description": r["description"],
-                "subject_type": r["subject_type"],
-                "recent_events": json.loads(r["recent_events"]),
-                "jid": r["node_jid"],
-                "created_at": r["created_at"] or "",
-                "updated_at": r["updated_at"] or "",
-            }
-            for r in rows
-        ]
+        return [self._row_to_subject(r) for r in rows]
 
     def update_subject_wal(self, user_id: str, name: str, recent_events: list) -> None:
         """Update only the recent_events WAL for an existing subject."""
@@ -160,16 +161,7 @@ class SubjectStore:
             ).fetchone()
         if row is None:
             return None
-        return {
-            "name": row["name"],
-            "summary": row["summary"],
-            "description": row["description"],
-            "subject_type": row["subject_type"],
-            "recent_events": json.loads(row["recent_events"]),
-            "jid": row["node_jid"],
-            "created_at": row["created_at"] or "",
-            "updated_at": row["updated_at"] or "",
-        }
+        return self._row_to_subject(row)
 
     def get_subject_by_name(self, user_id: str, name: str) -> dict | None:
         """Return a single subject by name, or None if not found."""
@@ -185,16 +177,7 @@ class SubjectStore:
             ).fetchone()
         if row is None:
             return None
-        return {
-            "name": row["name"],
-            "summary": row["summary"],
-            "description": row["description"],
-            "subject_type": row["subject_type"],
-            "recent_events": json.loads(row["recent_events"]),
-            "jid": row["node_jid"],
-            "created_at": row["created_at"] or "",
-            "updated_at": row["updated_at"] or "",
-        }
+        return self._row_to_subject(row)
 
     def get_recently_active(self, user_id: str, since: datetime, limit: int = 20) -> list[dict]:
         """Return subjects updated since `since`, ordered by update time desc."""
@@ -210,19 +193,7 @@ class SubjectStore:
                 """,
                 (user_id, since_str, limit),
             ).fetchall()
-        return [
-            {
-                "name": r["name"],
-                "summary": r["summary"],
-                "description": r["description"],
-                "subject_type": r["subject_type"],
-                "recent_events": json.loads(r["recent_events"]),
-                "jid": r["node_jid"],
-                "created_at": r["created_at"] or "",
-                "updated_at": r["updated_at"] or "",
-            }
-            for r in rows
-        ]
+        return [self._row_to_subject(r) for r in rows]
 
     def has_user(self, user_id: str) -> bool:
         with self._conn() as con:

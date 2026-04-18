@@ -1305,17 +1305,9 @@ let clusteredTypes = new Set();
 
 function toggleSingleTypeCluster(event, type) {
   event.stopPropagation();
-  const btn = event.target.closest('button');
 
   if (clusteredTypes.has(type)) {
     clusteredTypes.delete(type);
-    if (btn) {
-      btn.style.color = 'var(--text-muted)';
-      btn.style.borderColor = 'transparent';
-      btn.style.background = 'transparent';
-      btn.style.opacity = '0.6';
-      btn.textContent = 'Cluster';
-    }
     try {
       if (network.isCluster(`cluster_${type}`)) {
         network.openCluster(`cluster_${type}`);
@@ -1323,13 +1315,6 @@ function toggleSingleTypeCluster(event, type) {
     } catch (e) { }
   } else {
     clusteredTypes.add(type);
-    if (btn) {
-      btn.style.color = 'var(--gold)';
-      btn.style.borderColor = 'var(--gold)';
-      btn.style.background = 'rgba(201,168,76,0.1)';
-      btn.style.opacity = '1';
-      btn.textContent = 'Uncluster';
-    }
     network.cluster({
       joinCondition: function (nodeOptions) {
         if (!nodeOptions.subject) return false;
@@ -1348,6 +1333,7 @@ function toggleSingleTypeCluster(event, type) {
       }
     });
   }
+  populateFilterPanel();
 }
 
 

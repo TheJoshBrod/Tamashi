@@ -12,11 +12,8 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timedelta, timezone
-
-import litellm
 
 from core.config import settings
 from core.events import event_bus
@@ -64,20 +61,8 @@ def _build_reflection_prompt(subjects: list[dict], vocabulary: list[dict]) -> st
 
 
 def _call_reflection_llm(prompt: str) -> dict | None:
-    try:
-        resp = litellm.completion(
-            model=settings.rewriter_model,
-            messages=[
-                {"role": "system", "content": _REFLECTION_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.3,
-        )
-        return json.loads(resp.choices[0].message.content)
-    except Exception:
-        log.exception("reflection LLM call failed")
-        return None
+    from memory.rewriter import _call_json_llm
+    return _call_json_llm(_REFLECTION_SYSTEM, prompt, temperature=0.3)
 
 
 async def reflect_for_user(user_id: str) -> None:
@@ -160,16 +145,20 @@ async def reflect_for_user(user_id: str) -> None:
 async def reflection_loop() -> None:
     """Background loop: runs macro-pattern synthesis for all users periodically."""
     while True:
-        await asyncio.sleep(settings.reflection_interval_seconds)
         if not settings.reflection_enabled:
+            await asyncio.sleep(60)
             continue
+        await asyncio.sleep(settings.reflection_interval_seconds)
         try:
             from memory.store import subject_store
             users = subject_store.list_users()
-            for user_id in users:
+
+            async def _safe_reflect(user_id: str) -> None:
                 try:
                     await reflect_for_user(user_id)
                 except Exception:
                     log.exception("reflection failed for user %s", user_id)
+
+            await asyncio.gather(*[_safe_reflect(uid) for uid in users])
         except Exception:
             log.exception("reflection loop error")
