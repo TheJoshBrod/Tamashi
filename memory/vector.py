@@ -141,14 +141,17 @@ class QdrantMemoryStore:
             log.exception("vector search failed for user %s", user_id)
             return []
 
-    def search_with_scores(self, user_id: str, query: str, k: int = 5) -> list[dict]:
-        """Like search() but returns [{node_id, score}] for edge weight assignment."""
+    def search_with_scores(self, user_id: str, query: str, k: int = 5, score_threshold: float | None = None) -> list[dict]:
+        """Like search() but returns [{node_id, score}] for weighted GraphRAG ranking."""
         if not query or not query.strip():
             return []
         try:
+            kwargs: dict = {}
+            if score_threshold is not None:
+                kwargs["score_threshold"] = score_threshold
             return [
                 {"node_id": r.payload["node_id"], "score": r.score}
-                for r in self._query_points(user_id, query, k, score_threshold=0.7)
+                for r in self._query_points(user_id, query, k, **kwargs)
             ]
         except Exception:
             log.exception("vector search_with_scores failed for user %s", user_id)

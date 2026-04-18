@@ -122,7 +122,12 @@ def ingest_subjects(
     deduped = list(merged.values())
     now = _now_iso()
 
-    result = spawn(IngestSubjects(subjects=deduped, relations=relations, now=now), user_node)
+    # Normalize relations: ensure weight key is always present for the Jac walker.
+    normalized_relations = [
+        {**r, "weight": float(r.get("weight", 1.0))} for r in relations
+    ]
+
+    result = spawn(IngestSubjects(subjects=deduped, relations=normalized_relations, now=now), user_node)
 
     new_jids: dict[str, str] = {}
     needs_rewrite: list[str] = []
@@ -151,12 +156,13 @@ def ingest_subjects(
         if len(recent_events) >= settings.subject_wal_threshold:
             needs_rewrite.append(name)
 
-    for rel in relations:
+    for rel in normalized_relations:
         subject_store.upsert_relation(
             user_id=user_id,
             src_name=rel["source"],
             kind=rel["kind"],
             tgt_name=rel["target"],
+            weight=rel["weight"],
         )
 
     _loaded_users.add(user_id)
@@ -207,14 +213,16 @@ def retrieve_context(user_id: str, query: str = "", max_subjects: int = 10) -> s
         _ensure_loaded(user_id)
         user_node = _get_user_node(user_id)
 
-        seed_jids: list[str] = []
+        seed_results: list[dict] = []
         if query:
             try:
-                seed_jids = vector_store.search(user_id, query, k=5)
+                seed_results = vector_store.search_with_scores(user_id, query, k=5)
             except Exception:
                 pass
 
-        if seed_jids:
+        if seed_results:
+            seed_jids = [r["node_id"] for r in seed_results]
+            seed_score_by_jid = {r["node_id"]: r["score"] for r in seed_results}
             result = spawn(RetrieveBySubjectJids(seed_jids=seed_jids), user_node)
         else:
             result = spawn(RetrieveSubjects(max_subjects=max_subjects), user_node)
@@ -222,17 +230,55 @@ def retrieve_context(user_id: str, query: str = "", max_subjects: int = 10) -> s
         if not result.reports:
             return ""
 
-        seen: set[str] = set()
-        lines = []
-        for r in result.reports:
-            name = str(r.get("name", ""))
-            if not name or name in seen:
-                continue
-            seen.add(name)
-            summary = str(r.get("summary", ""))
-            lines.append(f"- {name}: {summary}" if summary else f"- {name}")
-            if len(lines) >= max_subjects:
-                break
+        if seed_results:
+            # Weighted GraphRAG: rank seeds by vector score, neighbors by seed_score × edge_weight.
+            jid_to_name = {str(r.get("jid", "")): str(r.get("name", "")) for r in result.reports}
+            seed_names_with_scores = {
+                jid_to_name[jid]: score
+                for jid, score in seed_score_by_jid.items()
+                if jid in jid_to_name
+            }
+            relations = subject_store.get_relations(user_id)
+            weight_lookup = {
+                (r["src_name"], r["tgt_name"]): r.get("weight", 1.0) for r in relations
+            }
+
+            seen: set[str] = set()
+            scored: list[tuple[float, dict]] = []
+            for r in result.reports:
+                name = str(r.get("name", ""))
+                rjid = str(r.get("jid", ""))
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                if rjid in seed_score_by_jid:
+                    score = seed_score_by_jid[rjid]
+                else:
+                    neighbor_scores = [
+                        s_score * weight_lookup.get((s_name, name), 0.0)
+                        for s_name, s_score in seed_names_with_scores.items()
+                    ]
+                    score = max(neighbor_scores) if neighbor_scores else 0.0
+                scored.append((score, r))
+
+            scored.sort(key=lambda x: -x[0])
+            lines = []
+            for _score, r in scored[:max_subjects]:
+                name = str(r.get("name", ""))
+                summary = str(r.get("summary", ""))
+                lines.append(f"- {name}: {summary}" if summary else f"- {name}")
+        else:
+            seen = set()
+            lines = []
+            for r in result.reports:
+                name = str(r.get("name", ""))
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                summary = str(r.get("summary", ""))
+                lines.append(f"- {name}: {summary}" if summary else f"- {name}")
+                if len(lines) >= max_subjects:
+                    break
 
         if not lines:
             return ""
@@ -452,10 +498,10 @@ def apply_rewrite(
         node_jid=jid_str,
     )
 
-    # 4. Add new edges
+    # 4. Add new edges (with confidence-derived weights from the rewriter)
     if add_edges:
         edge_dicts = [
-            {"source": name, "kind": e["kind"], "target": e["target"]}
+            {"source": name, "kind": e["kind"], "target": e["target"], "weight": e.get("weight", 1.0)}
             for e in add_edges
         ]
         ingest_subjects(user_id, [], edge_dicts)
@@ -483,17 +529,18 @@ def delete_relation(user_id: str, src_name: str, kind: str, tgt_name: str) -> di
     subject_store.delete_relation(user_id, src_name, kind, tgt_name)
 
     # 2. Delete from Jac in-memory graph using DeleteRelates walker.
-    #    Walker deletes all src->tgt edges then re-adds any surviving kinds.
+    #    Walker deletes all src->tgt edges then re-adds surviving ones with their weights.
     remaining = subject_store.get_relations(user_id)
-    keep_kinds = [
-        r["kind"] for r in remaining
+    keep_edges = [
+        {"kind": r["kind"], "weight": r.get("weight", 1.0)}
+        for r in remaining
         if r["src_name"] == src_name and r["tgt_name"] == tgt_name
     ]
     spawn(DeleteRelates(
         source_name=src_name,
         kind=kind,
         target_name=tgt_name,
-        keep_kinds=keep_kinds,
+        keep_edges=keep_edges,
         now=_now_iso(),
     ), user_node)
 

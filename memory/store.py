@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
 from core.config import settings
@@ -194,6 +195,34 @@ class SubjectStore:
             "created_at": row["created_at"] or "",
             "updated_at": row["updated_at"] or "",
         }
+
+    def get_recently_active(self, user_id: str, since: datetime, limit: int = 20) -> list[dict]:
+        """Return subjects updated since `since`, ordered by update time desc."""
+        since_str = since.strftime("%Y-%m-%d %H:%M:%S")
+        with self._conn() as con:
+            rows = con.execute(
+                """
+                SELECT name, summary, description, subject_type, recent_events,
+                       node_jid, created_at, updated_at
+                FROM memory_subjects
+                WHERE user_id = ? AND updated_at >= ?
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (user_id, since_str, limit),
+            ).fetchall()
+        return [
+            {
+                "name": r["name"],
+                "summary": r["summary"],
+                "description": r["description"],
+                "subject_type": r["subject_type"],
+                "recent_events": json.loads(r["recent_events"]),
+                "jid": r["node_jid"],
+                "created_at": r["created_at"] or "",
+                "updated_at": r["updated_at"] or "",
+            }
+            for r in rows
+        ]
 
     def has_user(self, user_id: str) -> bool:
         with self._conn() as con:

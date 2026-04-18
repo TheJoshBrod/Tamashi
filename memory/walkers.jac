@@ -66,6 +66,7 @@ walker IngestSubjects {
             rsrc: str = str(r["source"]);
             rtgt: str = str(r["target"]);
             rkind: str = str(r["kind"]);
+            rweight: float = float(r["weight"]);
 
             src_nodes = [-->][?:Subject, name==rsrc];
             tgt_nodes = [-->][?:Subject, name==rtgt];
@@ -73,7 +74,7 @@ walker IngestSubjects {
                 if tgt_nodes {
                     src_nodes[0] +>: Relates(
                         kind=rkind,
-                        weight=1.0,
+                        weight=rweight,
                         created_at=self.now,
                         updated_at=self.now
                     ) :+> tgt_nodes[0];
@@ -280,13 +281,13 @@ walker ClearSubjectWAL {
 }
 
 # Delete a specific Relates edge by source name, kind, and target name.
-# keep_kinds: edge kinds between src->tgt that should survive (the rest are deleted).
-# Strategy: delete all src->tgt edges then re-add the surviving kinds.
+# keep_edges: [{kind, weight}] for edges between src->tgt that should survive.
+# Strategy: delete all src->tgt edges then re-add the surviving ones with their weights.
 walker DeleteRelates {
     has source_name: str;
     has kind: str;
     has target_name: str;
-    has keep_kinds: list;
+    has keep_edges: list;
     has now: str;
 
     can delete with User entry {
@@ -299,10 +300,10 @@ walker DeleteRelates {
                 src = src_nodes[0];
                 tgt = tgt_nodes[0];
                 src del --> tgt;
-                for k in self.keep_kinds {
+                for e in self.keep_edges {
                     src +>: Relates(
-                        kind=str(k),
-                        weight=1.0,
+                        kind=str(e["kind"]),
+                        weight=float(e["weight"]),
                         created_at=self.now,
                         updated_at=self.now
                     ) :+> tgt;

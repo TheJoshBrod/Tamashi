@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     rewriter_neighbor_k: int = 5
     rewriter_max_concurrent: int = 3
 
+    # --- reflection config ---
+    reflection_enabled: bool = True
+    reflection_interval_seconds: int = 3600
+    reflection_window_days: int = 7
+    reflection_subject_limit: int = 20
+
     def model_post_init(self, __context: Any) -> None:
         yaml_data = _load_yaml()
         for key, val in yaml_data.items():

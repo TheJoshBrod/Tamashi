@@ -31,6 +31,8 @@ async def startup_event():
     event_bus.set_main_loop(asyncio.get_running_loop())
     from display.websocket import manager
     manager.start_heartbeat()
+    from memory.reflector import reflection_loop
+    asyncio.create_task(reflection_loop())
 
 
 @app.get("/health")

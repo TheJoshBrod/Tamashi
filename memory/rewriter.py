@@ -72,9 +72,11 @@ def _build_prompt(subject: dict, neighbors: list[dict], semantic_nbrs: list[dict
         """{
   "summary": "string (<=200 chars, stable identity blurb)",
   "description": "string (rewritten, integrates new facts, drops stale ones)",
-  "add_edges": [{"target": "existing-name", "kind": "one-of-allowed"}],
+  "add_edges": [{"target": "existing-name", "kind": "one-of-allowed", "confidence": 0.0-1.0}],
   "remove_edges": [{"target": "existing-name", "kind": "one-of-allowed"}]
 }""",
+        "",
+        "confidence is your certainty (0.0=uncertain, 1.0=definite) that the edge is accurate and lasting.",
     ]
     return "\n".join(lines)
 
@@ -112,7 +114,13 @@ def _validate_rewrite(raw: dict, valid_targets: set[str]) -> dict | None:
         target = e.get("target", "").strip()
         kind = e.get("kind", "").strip()
         if target in valid_targets and kind in allowed_kinds:
-            add_edges.append({"target": target, "kind": kind})
+            raw_confidence = e.get("confidence", 1.0)
+            try:
+                confidence = float(raw_confidence)
+            except (TypeError, ValueError):
+                confidence = 1.0
+            weight = max(0.0, min(1.0, confidence))
+            add_edges.append({"target": target, "kind": kind, "weight": weight})
         else:
             log.debug("rewrite: dropping add_edge %r/%r (invalid target or kind)", target, kind)
 
