@@ -1,0 +1,27 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Void Background -->
+  <rect width="32" height="32" rx="6" fill="#040410"/>
+  
+  <defs>
+    <!-- Premium Gold Radial Glow -->
+    <radialGradient id="soulGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(16 16) rotate(90) scale(14)">
+      <stop stop-color="#E8C874" stop-opacity="0.8"/>
+      <stop offset="0.6" stop-color="#C9A84C" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#C9A84C" stop-opacity="0"/>
+    </radialGradient>
+    
+    <!-- Gaussian Blur for bloom -->
+    <filter id="bloom" x="-4" y="-4" width="40" height="40" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="1.2" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Concentric 'Energy' Rings -->
+  <circle cx="16" cy="16" r="11" stroke="#C9A84C" stroke-width="0.2" stroke-opacity="0.15"/>
+  <circle cx="16" cy="16" r="8" stroke="#C9A84C" stroke-width="0.5" stroke-opacity="0.3"/>
+  
+  <!-- The Soul Core -->
+  <circle cx="16" cy="16" r="13" fill="url(#soulGlow)"/>
+  <circle cx="16" cy="16" r="3" fill="#E8C874" filter="url(#bloom)"/>
+</svg>

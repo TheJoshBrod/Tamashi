@@ -253,7 +253,13 @@ function initGraph() {
   });
 
   network.on('selectNode', (params) => {
-    focusedNodeId = params.nodes[0];
+    const nodeId = params.nodes[0];
+    if (network.isCluster(nodeId)) {
+      network.openCluster(nodeId);
+      network.unselectAll();
+      return;
+    }
+    focusedNodeId = nodeId;
     updateIsolation();
   });
 
@@ -1122,14 +1128,23 @@ function populateFilterPanel() {
     const count = typeCounts[type] || 0;
     const isOff = hiddenTypes.has(type);
     const item = document.createElement('div');
-    item.className = `fi${isOff ? ' off' : ''}`;
+    item.className = `fi subject-fi${isOff ? ' off' : ''}`;
     item.dataset.type = type;
+
+    const isClustered = clusteredTypes.has(type);
+    const clusterBtnStyle = isClustered ? 'color: var(--gold); border-color: var(--gold); background: rgba(201,168,76,0.1);' : 'color: var(--text-muted); opacity: 0.6;';
+
     item.innerHTML = `
-      <div class="fi-check">✓</div>
+      <div class="fi-check" onclick="toggleTypeFilter('${type}'); event.stopPropagation();">✓</div>
       <div class="fi-dot" style="background:${meta.border};box-shadow:0 0 4px ${meta.border}"></div>
       <span class="fi-label">${type}</span>
-      <span class="fi-count">${count}</span>`;
-    item.addEventListener('click', () => toggleTypeFilter(type));
+      <span class="fi-count">${count}</span>
+      <button class="btn btn-ghost cluster-mini-btn" onclick="toggleSingleTypeCluster(event, '${type}')" title="Collapse/expand nodes of this type" style="padding: 2px 4px; font-size: 0.48rem; flex: 0 0 56px; text-align: center; margin-left: 0; box-sizing: border-box; ${clusterBtnStyle}">${isClustered ? 'Uncluster' : 'Cluster'}</button>
+    `;
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      toggleTypeFilter(type);
+    });
     typesEl.appendChild(item);
   });
 
@@ -1149,7 +1164,7 @@ function populateFilterPanel() {
   kindEntries.sort((a, b) => b[1] - a[1]).forEach(([kind, count]) => {
     const isOff = hiddenKinds.has(kind);
     const item = document.createElement('div');
-    item.className = `fi${isOff ? ' off' : ''}`;
+    item.className = `fi relation-fi${isOff ? ' off' : ''}`;
     item.dataset.kind = kind;
     item.innerHTML = `
       <div class="fi-check">✓</div>
@@ -1285,6 +1300,57 @@ function updateFilterBtn() {
   document.getElementById('filter-btn').classList.toggle('filter-active', active);
 }
 
+/* ── Clustering ───────────────────────────────────────────── */
+let clusteredTypes = new Set();
+
+function toggleSingleTypeCluster(event, type) {
+  event.stopPropagation();
+  const btn = event.target.closest('button');
+
+  if (clusteredTypes.has(type)) {
+    clusteredTypes.delete(type);
+    if (btn) {
+      btn.style.color = 'var(--text-muted)';
+      btn.style.borderColor = 'transparent';
+      btn.style.background = 'transparent';
+      btn.style.opacity = '0.6';
+      btn.textContent = 'Cluster';
+    }
+    try {
+      if (network.isCluster(`cluster_${type}`)) {
+        network.openCluster(`cluster_${type}`);
+      }
+    } catch (e) { }
+  } else {
+    clusteredTypes.add(type);
+    if (btn) {
+      btn.style.color = 'var(--gold)';
+      btn.style.borderColor = 'var(--gold)';
+      btn.style.background = 'rgba(201,168,76,0.1)';
+      btn.style.opacity = '1';
+      btn.textContent = 'Uncluster';
+    }
+    network.cluster({
+      joinCondition: function (nodeOptions) {
+        if (!nodeOptions.subject) return false;
+        return (nodeOptions.subject.subject_type || 'other').toLowerCase() === type;
+      },
+      clusterNodeProperties: {
+        id: `cluster_${type}`,
+        shape: 'hexagon',
+        size: 38,
+        font: { size: 14, color: '#ece4d4', face: '"JetBrains Mono", monospace' },
+        color: nodeColorFromType(type),
+      },
+      processProperties: function (clusterOptions, childNodes) {
+        clusterOptions.label = `[${type.toUpperCase()}]\n(${childNodes.length})`;
+        return clusterOptions;
+      }
+    });
+  }
+}
+
+
 /* ═══════════════════════════════════════════════════════════
    UI UTILITIES
    ═══════════════════════════════════════════════════════════ */
@@ -1332,3 +1398,39 @@ function buildTooltip(subject) {
 
   return el;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   FILTER PANEL RESIZER
+   ═══════════════════════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+  const resizer = document.getElementById('filter-resizer');
+  const panel = document.getElementById('filter-panel');
+  let isResizing = false;
+
+  if (resizer && panel) {
+    resizer.addEventListener('mousedown', (e) => {
+      isResizing = true;
+      resizer.classList.add('active');
+      document.body.style.cursor = 'ew-resize';
+      panel.style.transition = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isResizing) return;
+      let newWidth = e.clientX;
+      if (newWidth < 220) newWidth = 220;
+      if (newWidth > 600) newWidth = 600;
+      panel.style.width = newWidth + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isResizing) {
+        isResizing = false;
+        resizer.classList.remove('active');
+        document.body.style.cursor = '';
+        panel.style.transition = '';
+      }
+    });
+  }
+});
