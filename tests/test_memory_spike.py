@@ -69,7 +69,7 @@ def test_ingest_and_retrieve():
     new_jids = result["new_jids"]
     assert len(new_jids) == 3, f"Expected 3 new subjects, got {new_jids}"
 
-    subjects = bridge.list_user_subjects(user_a)
+    subjects = bridge.get_full_graph(user_a)["nodes"]
     names = {s["name"] for s in subjects}
     assert "Koda" in names
     assert "User" in names
@@ -83,7 +83,7 @@ def test_user_isolation():
     user_a, user_b = _uid("user_a"), _uid("user_b")
     bridge.ingest_subjects(user_a, SAMPLE_SUBJECTS, [])
 
-    subjects_b = bridge.list_user_subjects(user_b)
+    subjects_b = bridge.get_full_graph(user_b)["nodes"]
     assert subjects_b == [], f"User B should have no subjects, got: {subjects_b}"
 
 
@@ -121,7 +121,7 @@ def test_sqlite_persistence_via_reload(tmp_path, monkeypatch):
     # will probe the graph and find them, marking the user as loaded.
     bridge_mod._loaded_users.clear()
 
-    subjects = bridge_mod.list_user_subjects(user_a)
+    subjects = bridge_mod.get_full_graph(user_a)["nodes"]
     names = {s["name"] for s in subjects}
     assert "Koda" in names, f"After reload: {subjects}"
     assert len(subjects) == len(SAMPLE_SUBJECTS), f"Expected {len(SAMPLE_SUBJECTS)}, got {len(subjects)}"
@@ -175,7 +175,7 @@ def test_intra_batch_dedup():
     # Only ONE subject created, not two
     assert len(result["new_jids"]) == 1, f"Expected 1 new subject, got {result['new_jids']}"
 
-    subjects = bridge_mod.list_user_subjects(user_a)
+    subjects = bridge_mod.get_full_graph(user_a)["nodes"]
     names = [s["name"] for s in subjects]
     assert names.count("Ann Arbor") == 1, f"Duplicate subjects found: {names}"
 

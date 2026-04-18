@@ -32,7 +32,7 @@ def test_validate_rewrite_passes_valid_input():
     result = _validate_rewrite(raw, VALID_TARGETS)
     assert result is not None
     assert result["summary"] == "A person who owns a dog"
-    assert result["add_edges"] == [{"target": "Koda", "kind": "has_a"}]
+    assert result["add_edges"] == [{"target": "Koda", "kind": "has_a", "weight": 1.0}]
     assert result["remove_edges"] == []
 
 

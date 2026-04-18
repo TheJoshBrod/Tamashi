@@ -154,7 +154,7 @@ def test_consolidator_extracts_and_ingests(tmp_path, monkeypatch):
 
     asyncio.run(consolidate_if_needed(sid, store))
 
-    subjects = bridge_mod.list_user_subjects(sid)
+    subjects = bridge_mod.get_full_graph(sid)["nodes"]
     names = {s["name"] for s in subjects}
     assert "User" in names, f"Expected 'User' in subjects, got {names}"
     assert "Marathon" in names, f"Expected 'Marathon' in subjects, got {names}"

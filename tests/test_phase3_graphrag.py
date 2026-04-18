@@ -204,7 +204,7 @@ def test_ingest_subjects_walker_creates_and_reports(isolated_store):
     assert "Koda" in new_jids, f"Expected Koda in new_jids: {new_jids}"
     assert "User" in new_jids, f"Expected User in new_jids: {new_jids}"
 
-    subjects = bridge_mod.list_user_subjects(user_a)
+    subjects = bridge_mod.get_full_graph(user_a)["nodes"]
     names = {s["name"] for s in subjects}
     assert names == {"Koda", "User"}, f"Unexpected subjects: {names}"
 
@@ -226,7 +226,7 @@ def test_retrieve_by_subject_jids_expands_neighbors(isolated_store):
     user_node = spawn(GetOrCreateUser(user_id=user_a), root()).reports[0]
     now = datetime.now(timezone.utc).isoformat()
     spawn(IngestSubjects(subjects=[], relations=[
-        {"source": "User", "kind": "wants", "target": "5K race"}
+        {"source": "User", "kind": "wants", "target": "5K race", "weight": 1.0}
     ], now=now), user_node)
 
     # Seed on "User"; walker must expand to "5K race" via the edge
