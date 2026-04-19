@@ -671,8 +671,9 @@ body {
     40%      { transform: scaleY(0.95); }
     48%      { transform: scaleY(0.98); }
     54%      { transform: scaleY(0.15); }
-    62%      { transform: scaleY(0.3); }
-    100%     { transform: scaleY(0.85); }
+    65%      { transform: scaleY(0.35); }
+    82%      { transform: scaleY(0.75); }
+    100%     { transform: scaleY(0.5); }
 }
 
 /* ========== ASLEEP STATE ========== */
