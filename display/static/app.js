@@ -96,4 +96,19 @@ function updateState(state, detail) {
     status.textContent = label;
 }
 
-connect();
+// ?state=thinking (or any state name) pins that state locally for visual testing.
+// Use arrow keys to cycle through all states. No WS connection is made.
+const forcedState = new URLSearchParams(location.search).get('state');
+if (forcedState) {
+    const states = Object.keys(stateLabels);
+    let idx = Math.max(0, states.indexOf(forcedState));
+    updateState(states[idx], null);
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight') idx = (idx + 1) % states.length;
+        else if (e.key === 'ArrowLeft') idx = (idx - 1 + states.length) % states.length;
+        else return;
+        updateState(states[idx], null);
+    });
+} else {
+    connect();
+}

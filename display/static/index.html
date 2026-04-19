@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tamashi | Dashboard</title>
     <link rel="icon" type="image/svg+xml" href="/display/static/favicon.svg">
-    <link rel="stylesheet" href="/display/static/styles.css">
+    <link rel="stylesheet" href="/display/static/styles.css?v=2">
 </head>
 
 <body>
@@ -21,6 +21,8 @@
                     <ellipse cx="75" cy="105" rx="18" ry="22" class="eye-white" />
                     <circle cx="78" cy="108" r="8" class="pupil" />
                     <ellipse cx="73" cy="100" rx="4" ry="3" class="eye-shine" />
+                    <ellipse cx="75" cy="105" rx="18" ry="22" class="eyelid left-eyelid" fill="#7EC8E3" opacity="0" />
+                    <path class="eye-closed-line" d="M 58 106 Q 75 101 92 106" fill="none" stroke="#2C3E50" stroke-width="3" stroke-linecap="round" opacity="0" />
                 </g>
 
                 <!-- Right eye -->
@@ -28,6 +30,8 @@
                     <ellipse cx="125" cy="105" rx="18" ry="22" class="eye-white" />
                     <circle cx="122" cy="108" r="8" class="pupil" />
                     <ellipse cx="127" cy="100" rx="4" ry="3" class="eye-shine" />
+                    <ellipse cx="125" cy="105" rx="18" ry="22" class="eyelid right-eyelid" fill="#7EC8E3" opacity="0" />
+                    <path class="eye-closed-line" d="M 108 106 Q 125 101 142 106" fill="none" stroke="#2C3E50" stroke-width="3" stroke-linecap="round" opacity="0" />
                 </g>
 
                 <!-- Mouth -->
@@ -42,6 +46,13 @@
                     <circle cx="155" cy="55" r="5" class="dot dot-1" />
                     <circle cx="170" cy="42" r="7" class="dot dot-2" />
                     <circle cx="188" cy="26" r="9" class="dot dot-3" />
+                </g>
+
+                <!-- Zzz for asleep state -->
+                <g class="zzz-group" opacity="0">
+                    <text class="zzz zzz-1" x="138" y="78" fill="#e0e0e0" font-size="22" font-weight="bold">z</text>
+                    <text class="zzz zzz-2" x="152" y="55" fill="#e0e0e0" font-size="22" font-weight="bold">z</text>
+                    <text class="zzz zzz-3" x="168" y="32" fill="#e0e0e0" font-size="22" font-weight="bold">Z</text>
                 </g>
 
                 <!-- Question mark for confused -->

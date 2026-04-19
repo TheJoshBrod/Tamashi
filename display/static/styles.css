@@ -41,6 +41,8 @@ body {
     fill: var(--body-color);
     stroke: var(--body-color-dark);
     stroke-width: 2;
+    transform-box: fill-box;
+    transform-origin: center;
 }
 
 .eye-white {
@@ -49,6 +51,8 @@ body {
 
 .pupil {
     fill: var(--pupil-color);
+    transform-box: fill-box;
+    transform-origin: center;
 }
 
 .eye-shine {
@@ -66,6 +70,8 @@ body {
 .blush {
     fill: var(--blush-color);
     opacity: 0;
+    transform-box: fill-box;
+    transform-origin: center;
 }
 
 .thinking-dots {
@@ -74,6 +80,46 @@ body {
 
 .dot {
     fill: var(--dot-color);
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+.left-eye, .right-eye {
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+.food {
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+.eyelid {
+    fill: var(--body-color);
+    transform-box: fill-box;
+    transform-origin: 50% 0%;
+    opacity: 0;
+}
+
+.eye-closed-line {
+    fill: none;
+    stroke: var(--pupil-color);
+    stroke-width: 3;
+    stroke-linecap: round;
+    opacity: 0;
+}
+
+.zzz-group {
+    opacity: 0;
+}
+
+.zzz {
+    fill: var(--text-color);
+    font-size: 22px;
+    font-weight: bold;
+    font-family: 'Comic Sans MS', 'Chalkboard SE', cursive;
+    transform-box: fill-box;
+    transform-origin: center;
 }
 
 .question-mark,
@@ -101,7 +147,6 @@ body {
 /* ========== IDLE STATE ========== */
 .creature.idle .body {
     animation: breathe 3s ease-in-out infinite;
-    transform-origin: center;
 }
 
 @keyframes breathe {
@@ -599,28 +644,84 @@ body {
 
 /* ========== GROGGY STATE ========== */
 .creature.groggy .body {
-    animation: sway-slow 3s ease-in-out infinite;
+    animation: heavy-sway 4s ease-in-out infinite;
 }
-.creature.groggy .left-eye,
-.creature.groggy .right-eye {
-    transform: scaleY(0.4);
+
+.creature.groggy .eyelid {
+    opacity: 1;
+    animation: groggy-blink 5s ease-in-out infinite;
 }
-@keyframes sway-slow {
-    0%, 100% { transform: rotate(0deg); }
-    50% { transform: rotate(4deg); }
+
+.creature.groggy .pupil {
+    animation: droopy-look 6s ease-in-out infinite;
+}
+
+.creature.groggy .mouth {
+    d: path("M 88 142 Q 100 138 112 142");
+}
+
+@keyframes heavy-sway {
+    0%, 100% { transform: rotate(-2deg) translateY(0); }
+    50%      { transform: rotate(3deg) translateY(-2px); }
+}
+
+@keyframes groggy-blink {
+    0%, 100% { transform: scaleY(0.85); }
+    45%, 55% { transform: scaleY(0.2); }
+}
+
+@keyframes droopy-look {
+    0%, 100% { transform: translateY(2px); }
+    50%      { transform: translateY(4px); }
 }
 
 /* ========== ASLEEP STATE ========== */
 .creature.asleep .body {
-    animation: breathe-deep 4s ease-in-out infinite;
+    animation: deep-breathe 4.5s ease-in-out infinite;
+    fill: #A8D8E8;
 }
-.creature.asleep .left-eye,
-.creature.asleep .right-eye {
-    transform: scaleY(0.1);
+
+.creature.asleep .eyelid {
+    opacity: 1;
+    transform: scaleY(1);
 }
-@keyframes breathe-deep {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.05); }
+
+.creature.asleep .eye-closed-line {
+    opacity: 1;
+}
+
+.creature.asleep .mouth {
+    d: path("M 90 142 Q 100 146 110 142");
+}
+
+.creature.asleep .zzz-group {
+    opacity: 1;
+}
+
+.creature.asleep .zzz {
+    animation: zzz-float 3s ease-out infinite;
+}
+
+.creature.asleep .zzz-1 { animation-delay: 0s; }
+.creature.asleep .zzz-2 { animation-delay: 1s; }
+.creature.asleep .zzz-3 { animation-delay: 2s; }
+
+@keyframes deep-breathe {
+    0%, 100% { transform: scale(1) translateY(0); }
+    50%      { transform: scale(1.06) translateY(2px); }
+}
+
+@keyframes zzz-float {
+    0% {
+        transform: translate(0, 0) rotate(-12deg) scale(0.5);
+        opacity: 0;
+    }
+    15% { opacity: 1; }
+    70% { opacity: 1; }
+    100% {
+        transform: translate(22px, -45px) rotate(18deg) scale(1.3);
+        opacity: 0;
+    }
 }
 
 /* ========== THOUGHT BUBBLE ========== */
