@@ -642,37 +642,37 @@ body {
     }
 }
 
-/* ========== GROGGY STATE ========== */
-.creature.groggy .body {
-    animation: heavy-sway 4s ease-in-out infinite;
+/* ========== GROGGY STATE (dozing off) ========== */
+.creature.groggy {
+    transform-origin: 50% 85%;
+    animation: head-nod 4.5s ease-in-out infinite;
 }
 
 .creature.groggy .eyelid {
     opacity: 1;
-    animation: groggy-blink 5s ease-in-out infinite;
-}
-
-.creature.groggy .pupil {
-    animation: droopy-look 6s ease-in-out infinite;
+    animation: dozing-droop 4.5s ease-in-out infinite;
 }
 
 .creature.groggy .mouth {
-    d: path("M 88 142 Q 100 138 112 142");
+    d: path("M 94 143 Q 100 148 106 143");
 }
 
-@keyframes heavy-sway {
-    0%, 100% { transform: rotate(-2deg) translateY(0); }
-    50%      { transform: rotate(3deg) translateY(-2px); }
+@keyframes head-nod {
+    0%       { transform: rotate(0deg) translateY(0); }
+    40%      { transform: rotate(12deg) translateY(8px); }
+    48%      { transform: rotate(14deg) translateY(10px); }
+    54%      { transform: rotate(-2deg) translateY(-3px); }
+    60%      { transform: rotate(0deg) translateY(0); }
+    100%     { transform: rotate(0deg) translateY(0); }
 }
 
-@keyframes groggy-blink {
-    0%, 100% { transform: scaleY(0.85); }
-    45%, 55% { transform: scaleY(0.2); }
-}
-
-@keyframes droopy-look {
-    0%, 100% { transform: translateY(2px); }
-    50%      { transform: translateY(4px); }
+@keyframes dozing-droop {
+    0%       { transform: scaleY(0.5); }
+    40%      { transform: scaleY(0.95); }
+    48%      { transform: scaleY(0.98); }
+    54%      { transform: scaleY(0.15); }
+    62%      { transform: scaleY(0.3); }
+    100%     { transform: scaleY(0.85); }
 }
 
 /* ========== ASLEEP STATE ========== */
