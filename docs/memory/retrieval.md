@@ -9,6 +9,11 @@ When called with a query:
 3.  **Fallback**: If no vector matches are found (or no query provided), fall back to `RetrieveSubjects` (naive most-recent-first, up to `max_subjects`).
 4.  **Return value**: Formatted as `Relevant memory:\n- Name: summary` — the tool returns this string directly to the agent.
 
+> The `- Name: summary` line shape is a load-bearing contract: the Phase 2
+> [eval harness parser](eval_harness.md) matches `^- NAME(: SUMMARY)?$` to
+> reconstruct the ranked name list. Retrieval experiments must preserve that
+> line shape or update `tests/memory_eval/parsing.py` in lockstep.
+
 ---
 
 [← Back to Documentation Hub](../README.md)

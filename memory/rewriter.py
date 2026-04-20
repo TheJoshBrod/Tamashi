@@ -169,6 +169,7 @@ async def rewrite_subject(user_id: str, name: str) -> None:
             })
             
             from memory import bridge
+            from memory.store import subject_store
 
             # 1. Load subject context (Jac graph)
             ctx = await asyncio.to_thread(bridge.get_subject_context, user_id, name)
@@ -179,9 +180,17 @@ async def rewrite_subject(user_id: str, name: str) -> None:
             subject = ctx["subject"]
             neighbors = ctx["neighbors"]
 
-            if not subject.get("recent_events"):
-                log.debug("rewrite: subject %r WAL already cleared for %s", name, user_id)
+            # Snapshot pending events from the authoritative WAL (subject_events).
+            # We keep the ids so apply_rewrite can atomically delete exactly the
+            # events we saw — any append that lands during the LLM call gets a new
+            # id and survives. Feed the payloads into the prompt so the LLM sees
+            # the same facts the snapshot captured.
+            pending = await asyncio.to_thread(subject_store.get_events, user_id, name)
+            if not pending:
+                log.debug("rewrite: subject %r WAL already drained for %s", name, user_id)
                 return
+            consumed_event_ids = [e["id"] for e in pending]
+            subject["recent_events"] = [e["payload"] for e in pending]
 
             # 2. Semantic neighbors from Qdrant (unlinked candidates for new edges)
             semantic_nbrs: list[dict] = []
@@ -221,12 +230,14 @@ async def rewrite_subject(user_id: str, name: str) -> None:
             if not rewrite:
                 return
 
-            # 5. Apply mutations (Jac + SQLite + Qdrant)
+            # 5. Apply mutations (Jac + SQLite + Qdrant). Passing the id snapshot
+            #    makes the WAL consumption atomic at the SQLite layer.
             await asyncio.to_thread(
                 bridge.apply_rewrite,
                 user_id, name,
                 rewrite["summary"], rewrite["description"],
                 rewrite["add_edges"], rewrite["remove_edges"],
+                consumed_event_ids,
             )
 
             # 6. Emit success event

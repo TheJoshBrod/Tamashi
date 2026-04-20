@@ -76,6 +76,65 @@ class SubjectStore:
                 ON memory_relations(user_id, src_name, kind, tgt_name)
             """)
 
+            # Authoritative per-event WAL. Replaces the JSON recent_events column
+            # as the source of truth consumed by the rewriter. Each append gets a
+            # stable autoincrement id so the rewriter can snapshot [ids it saw],
+            # spend 10s in the LLM, then atomically delete EXACTLY those ids —
+            # any new append during the LLM call gets a new id and survives the
+            # delete. The JSON recent_events column remains as a derived cache,
+            # kept in sync by the ingest/rewrite paths.
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS subject_events (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id      TEXT    NOT NULL,
+                    subject_name TEXT    NOT NULL,
+                    payload      TEXT    NOT NULL,
+                    created_at   TEXT    DEFAULT (datetime('now'))
+                )
+            """)
+            con.execute("""
+                CREATE INDEX IF NOT EXISTS idx_subject_events_user_name
+                ON subject_events(user_id, subject_name)
+            """)
+
+            self._migrate_recent_events_to_subject_events(con)
+
+    def _migrate_recent_events_to_subject_events(self, con) -> None:
+        """One-time, idempotent: copy JSON recent_events into the subject_events table.
+
+        Per-(user_id, subject_name) guard: skip any subject that already has rows
+        in subject_events, so re-running this on already-migrated databases is a
+        no-op. Runs inside the caller's transaction.
+        """
+        existing = con.execute(
+            "SELECT DISTINCT user_id, subject_name FROM subject_events"
+        ).fetchall()
+        migrated_keys = {(r["user_id"], r["subject_name"]) for r in existing}
+
+        rows = con.execute(
+            "SELECT user_id, name, recent_events, created_at FROM memory_subjects"
+        ).fetchall()
+        for r in rows:
+            key = (r["user_id"], r["name"])
+            if key in migrated_keys:
+                continue
+            try:
+                events = json.loads(r["recent_events"] or "[]")
+            except (TypeError, ValueError):
+                events = []
+            if not events:
+                continue
+            created_at = r["created_at"] or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            for event in events:
+                payload = event if isinstance(event, str) else json.dumps(event)
+                con.execute(
+                    """
+                    INSERT INTO subject_events (user_id, subject_name, payload, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (r["user_id"], r["name"], payload, created_at),
+                )
+
     # --- Subjects ---
 
     @staticmethod
@@ -258,6 +317,56 @@ class SubjectStore:
                     updated_at = datetime('now')
                 """,
                 (user_id, src_name, kind, tgt_name, weight),
+            )
+
+    # --- Subject events WAL (authoritative per-event log) ---
+
+    def append_event(self, user_id: str, subject_name: str, payload: str) -> int:
+        """Append one event to the WAL. Returns the autoincrement id."""
+        with self._conn() as con:
+            cur = con.execute(
+                """
+                INSERT INTO subject_events (user_id, subject_name, payload)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, subject_name, payload),
+            )
+            return int(cur.lastrowid)
+
+    def get_events(self, user_id: str, subject_name: str) -> list[dict]:
+        """Return all pending events for a subject, oldest first, as [{id, payload}]."""
+        with self._conn() as con:
+            rows = con.execute(
+                """
+                SELECT id, payload FROM subject_events
+                WHERE user_id = ? AND subject_name = ?
+                ORDER BY id ASC
+                """,
+                (user_id, subject_name),
+            ).fetchall()
+        return [{"id": int(r["id"]), "payload": r["payload"]} for r in rows]
+
+    def get_event_count(self, user_id: str, subject_name: str) -> int:
+        """Return the number of pending events for a subject."""
+        with self._conn() as con:
+            row = con.execute(
+                """
+                SELECT COUNT(*) AS n FROM subject_events
+                WHERE user_id = ? AND subject_name = ?
+                """,
+                (user_id, subject_name),
+            ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def delete_events_by_ids(self, ids: list[int]) -> None:
+        """Atomically delete a specific set of event ids. Concurrent appends survive."""
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        with self._conn() as con:
+            con.execute(
+                f"DELETE FROM subject_events WHERE id IN ({placeholders})",
+                tuple(int(i) for i in ids),
             )
 
     def get_relations(self, user_id: str) -> list[dict]:

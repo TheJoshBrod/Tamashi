@@ -16,6 +16,7 @@ Swapping the graph backend only requires changing this module.
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timezone
 
 from core.config import settings
@@ -40,7 +41,21 @@ from memory.walkers import (
 log = logging.getLogger(__name__)
 
 # Track which user_ids have been loaded into the in-process Jac graph.
+# Bridge functions run inside asyncio.to_thread, so parallel fire-and-forget
+# tasks land on different threads. A threading.Lock per user prevents them
+# from racing into duplicate LoadSubjects spawns on first post-restart access.
 _loaded_users: set[str] = set()
+_load_locks_guard = threading.Lock()
+_load_locks: dict[str, threading.Lock] = {}
+
+
+def _get_load_lock(user_id: str) -> threading.Lock:
+    with _load_locks_guard:
+        lock = _load_locks.get(user_id)
+        if lock is None:
+            lock = threading.Lock()
+            _load_locks[user_id] = lock
+        return lock
 
 
 def _now_iso() -> str:
@@ -58,20 +73,27 @@ def _ensure_loaded(user_id: str) -> None:
 
     Preserves recent_events across restarts: the SQLite store persists the WAL,
     and this function rehydrates it into the in-memory Subject nodes.
+
+    Double-checked locking: fast path is lock-free when the user is already
+    loaded; contention only occurs on first post-restart access.
     """
     if user_id in _loaded_users:
         return
-    user_node = _get_user_node(user_id)
-    # Probe: if subjects already in graph, just mark loaded and return.
-    probe = spawn(RetrieveSubjects(max_subjects=1), user_node)
-    if probe.reports:
+    with _get_load_lock(user_id):
+        if user_id in _loaded_users:
+            return
+        user_node = _get_user_node(user_id)
+        # Probe: if subjects already in graph, just mark loaded and return.
+        probe = spawn(RetrieveSubjects(max_subjects=1), user_node)
+        if probe.reports:
+            _loaded_users.add(user_id)
+            return
+        # Graph is empty for this user — reload from SQLite (covers process restart).
+        persisted = subject_store.get_subjects(user_id, limit=1000)
+        if persisted:
+            persisted_relations = subject_store.get_relations(user_id)
+            spawn(LoadSubjects(subjects=persisted, relations=persisted_relations), user_node)
         _loaded_users.add(user_id)
-        return
-    # Graph is empty for this user — reload from SQLite (covers process restart).
-    persisted = subject_store.get_subjects(user_id, limit=1000)
-    if persisted:
-        spawn(LoadSubjects(subjects=persisted), user_node)
-    _loaded_users.add(user_id)
 
 
 def ingest_subjects(
@@ -150,10 +172,17 @@ def ingest_subjects(
                 recent_events=recent_events,
                 node_jid=jid_val,
             )
+            # New subjects: the delta lives in `description` as the initial
+            # description — don't double-record it into the event WAL.
         else:
             subject_store.update_subject_wal(user_id, name, recent_events)
+            # Dual-write the same delta into subject_events as the authoritative
+            # per-event WAL. The rewriter consumes from here by id, so concurrent
+            # appends during the LLM call survive the rewrite's delete.
+            subject_store.append_event(user_id, name, merged[name]["description_delta"])
 
-        if len(recent_events) >= settings.subject_wal_threshold:
+        # Authoritative threshold check reads the subject_events table.
+        if subject_store.get_event_count(user_id, name) >= settings.subject_wal_threshold:
             needs_rewrite.append(name)
 
     for rel in normalized_relations:
@@ -462,10 +491,16 @@ def apply_rewrite(
     new_description: str,
     add_edges: list[dict],
     remove_edges: list[dict],
+    consumed_event_ids: list[int] | None = None,
 ) -> dict:
-    """Apply a rewriter's mutations: clear WAL, update summary/description, mutate edges.
+    """Apply a rewriter's mutations: consume the snapshot of WAL ids the rewriter
+    actually saw, update summary/description, mutate edges.
 
     Writes through all three layers: Jac graph, SQLite, Qdrant.
+
+    consumed_event_ids is the set of subject_events.id values the rewriter
+    snapshotted *before* the LLM call. We delete exactly those ids — any event
+    that arrived during the LLM call got a new id and survives.
     """
     _ensure_loaded(user_id)
     user_node = _get_user_node(user_id)
@@ -488,18 +523,26 @@ def apply_rewrite(
     if not jid_str and meta:
         jid_str = meta.get("jid")
 
-    # 3. Persist updated subject to SQLite (clears WAL)
+    # 3. Atomic consumption: delete exactly the event ids the rewriter saw.
+    #    Concurrent appends during the LLM call got new ids and survive.
+    if consumed_event_ids:
+        subject_store.delete_events_by_ids(consumed_event_ids)
+
+    # 4. Persist updated subject to SQLite. The JSON recent_events column is
+    #    a derived cache — sync it from the remaining subject_events rows so
+    #    concurrent appends are not clobbered on the next LoadSubjects.
+    remaining_events = [e["payload"] for e in subject_store.get_events(user_id, name)]
     subject_store.upsert_subject(
         user_id=user_id,
         name=name,
         summary=new_summary,
         description=new_description,
         subject_type=subject_type,
-        recent_events=[],
+        recent_events=remaining_events,
         node_jid=jid_str,
     )
 
-    # 4. Add new edges (with confidence-derived weights from the rewriter)
+    # 5. Add new edges (with confidence-derived weights from the rewriter)
     if add_edges:
         edge_dicts = [
             {"source": name, "kind": e["kind"], "target": e["target"], "weight": e.get("weight", 1.0)}
@@ -507,11 +550,11 @@ def apply_rewrite(
         ]
         ingest_subjects(user_id, [], edge_dicts)
 
-    # 5. Remove edges
+    # 6. Remove edges
     for edge in remove_edges:
         delete_relation(user_id, name, edge["kind"], edge["target"])
 
-    # 6. Re-embed in Qdrant (idempotent via stable node_id hash)
+    # 7. Re-embed in Qdrant (idempotent via stable node_id hash)
     if jid_str:
         try:
             vector_store.upsert(jid_str, user_id, "subject", name, summary=new_summary, subject_type=subject_type, description=new_description)

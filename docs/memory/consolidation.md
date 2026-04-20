@@ -21,6 +21,14 @@ agent reply sent  ← Orchestrator.handle_stream
 
 Configured via `settings.extraction_model` (default `anthropic/claude-haiku-4-5-20251001`). The prompt uses **Vocabulary Injection**: it searches for existing subjects via vector search and provides them as hints to the model to prevent duplicate entity creation with slightly different names.
 
+`memory/extractor.py` requests `response_format={"type": "json_object"}`, but
+Anthropic via litellm still occasionally wraps the payload in a
+```` ```json … ``` ```` fence. `_strip_json_fences` normalizes that before
+`json.loads`; without it, the parse raises, the broad `except` returns an
+empty result, and no subjects are ever written. A regression gate for this
+path lives in `tests/test_extractor_parsing.py` (default suite) — see the
+[eval harness doc](eval_harness.md) for how the bug was caught.
+
 ---
 
 ## Subject Rewriter (Memory Maintainer)

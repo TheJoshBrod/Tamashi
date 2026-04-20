@@ -14,6 +14,7 @@ The memory system's intricacies are documented in the following guides:
 - [Graph Schema Topology](schema.md) — Details the Jac graph nodes, edges, and allowed relation kinds.
 - [Consolidation & Maintenance](consolidation.md) — Explains how the event-driven WAL rewrites subjects without nightly batches.
 - [GraphRAG Retrieval](retrieval.md) — Covers how the agent retrieves memory context via vector searches and graph traversals.
+- [Eval Harness (Phase 2 Baseline)](eval_harness.md) — Measurement-first fixture harness that every downstream LLM-tuning phase must diff against.
 
 ---
 

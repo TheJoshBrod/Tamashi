@@ -72,22 +72,35 @@ walker IngestSubjects {
             tgt_nodes = [-->][?:Subject, name==rtgt];
             if src_nodes {
                 if tgt_nodes {
-                    src_nodes[0] +>: Relates(
-                        kind=rkind,
-                        weight=rweight,
-                        created_at=self.now,
-                        updated_at=self.now
-                    ) :+> tgt_nodes[0];
+                    src = src_nodes[0];
+                    tgt = tgt_nodes[0];
+                    tgt_jid: str = jid(tgt);
+                    connected = [src ->:Relates:kind==rkind:->];
+                    already_exists: bool = False;
+                    for n in connected {
+                        if jid(n) == tgt_jid {
+                            already_exists = True;
+                        }
+                    }
+                    if not already_exists {
+                        src +>: Relates(
+                            kind=rkind,
+                            weight=rweight,
+                            created_at=self.now,
+                            updated_at=self.now
+                        ) :+> tgt;
+                    }
                 }
             }
         }
     }
 }
 
-# Reload subjects from SQLite into the Jac graph on startup or cache miss.
-# Skips subjects that are already present (idempotent).
+# Reload subjects + relations from SQLite into the Jac graph on startup or
+# cache miss. Skips subjects/edges that are already present (idempotent).
 walker LoadSubjects {
     has subjects: list;
+    has relations: list;
 
     can load with User entry {
         for s in self.subjects {
@@ -112,6 +125,28 @@ walker LoadSubjects {
                     updated_at=tupdated,
                     recent_events=tevents
                 );
+            }
+        }
+
+        for r in self.relations {
+            rsrc: str = str(r["src_name"]);
+            rtgt: str = str(r["tgt_name"]);
+            rkind: str = str(r["kind"]);
+            rweight: float = float(r["weight"]);
+            rcreated: str = str(r["created_at"]);
+            rupdated: str = str(r["updated_at"]);
+
+            src_nodes = [-->][?:Subject, name==rsrc];
+            tgt_nodes = [-->][?:Subject, name==rtgt];
+            if src_nodes {
+                if tgt_nodes {
+                    src_nodes[0] +>: Relates(
+                        kind=rkind,
+                        weight=rweight,
+                        created_at=rcreated,
+                        updated_at=rupdated
+                    ) :+> tgt_nodes[0];
+                }
             }
         }
     }
