@@ -190,13 +190,15 @@ def test_sqlite_subject_store_upsert_and_list():
         store = SubjectStore(db_path=db)
 
         user = _uid("ss_test")
-        store.upsert_subject(user, "Koda", "Dog summary", "Koda is a dog", "object", ["event1"])
-        store.upsert_subject(user, "Koda", "Updated summary", "Koda is a golden retriever", "object", ["event1", "event2"])
+        store.upsert_subject(user, "Koda", "Dog summary", "Koda is a dog", "object")
+        store.upsert_subject(user, "Koda", "Updated summary", "Koda is a golden retriever", "object")
+        store.append_event(user, "Koda", "event1")
+        store.append_event(user, "Koda", "event2")
 
         rows = store.get_subjects(user)
         assert len(rows) == 1, f"Expected 1 subject (upsert should merge), got {len(rows)}"
         assert rows[0]["summary"] == "Updated summary"
-        assert len(rows[0]["recent_events"]) == 2
+        assert store.get_event_count(user, "Koda") == 2
 
 
 def test_sqlite_relation_store():

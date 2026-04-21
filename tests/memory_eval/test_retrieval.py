@@ -60,9 +60,5 @@ def test_retrieval_baseline(fixture, isolated_store, qdrant_store):
     score = score_retrieval(retrieved, fixture)
     record_retrieval_score(score)
 
-    # Baseline harness does not hard-assert on metric thresholds. Phase 3
-    # tuning drives forbidden_hit_rate toward 0 and recall_at_k up;
-    # forbidden_hit_rate is reported as a baseline measurement here, not
-    # an invariant, because with small seed sets and generous k the
-    # distractor is returned by design.
+    # Baseline measurement only — thresholds live in BASELINE.md, not here.
     assert isinstance(retrieved, list)

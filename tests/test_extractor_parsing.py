@@ -1,16 +1,14 @@
-"""Regression gate for memory.extractor._strip_json_fences.
+"""Regression gate for the shared JSON fence stripper.
 
 Anthropic via litellm returns markdown-fenced JSON even when
 `response_format={"type":"json_object"}` is requested. Without a fence
-strip, json.loads raises, the extractor swallows the exception, and every
-extraction silently returns {"subjects": [], "relations": []}.
-
-These tests run in the default suite so a regression is caught before
-someone notices the RUN_EVAL=1 baseline going to zero.
+strip, json.loads raises, the caller swallows the exception, and every
+LLM call silently returns empty — the extractor, rewriter, and reflector
+all route through this one helper.
 """
 from __future__ import annotations
 
-from memory.extractor import _strip_json_fences
+from memory.rewriter import _strip_json_fences
 
 
 def test_strip_json_fences_language_tag():

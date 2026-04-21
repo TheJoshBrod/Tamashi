@@ -9,7 +9,6 @@ node Subject {
     has subject_type: str;
     has created_at: str;
     has updated_at: str;
-    has recent_events: list = [];
 }
 
 edge Relates {

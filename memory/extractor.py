@@ -5,12 +5,10 @@ Replaces the old fact extractor with an entity-centric extraction pipeline.
 """
 from __future__ import annotations
 
-import json
 import logging
 
-import litellm
-
 from core.config import settings
+from memory.rewriter import _call_json_llm
 
 log = logging.getLogger(__name__)
 
@@ -56,18 +54,6 @@ Conversation:
 {messages}"""
 
 
-def _strip_json_fences(text: str) -> str:
-    """Some providers (Anthropic via litellm+json_object) wrap JSON in
-    ```json ... ``` fences even when asked for raw JSON. Strip them before
-    json.loads so the parse does not silently fail."""
-    s = text.strip()
-    if s.startswith("```"):
-        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
-        if s.endswith("```"):
-            s = s[: -3]
-    return s.strip()
-
-
 def _build_vocab_block(vocabulary: list[dict]) -> str:
     if not vocabulary:
         return ""
@@ -106,19 +92,8 @@ def extract_subjects(messages: list[dict], vocabulary: list[dict]) -> dict:
         messages=text,
     )
 
-    try:
-        resp = litellm.completion(
-            model=settings.extraction_model,
-            messages=[
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0,
-        )
-        raw = json.loads(_strip_json_fences(resp.choices[0].message.content))
-    except Exception:
-        log.exception("subject extraction failed")
+    raw = _call_json_llm(_SYSTEM, prompt, model=settings.extraction_model)
+    if raw is None:
         return {"subjects": [], "relations": []}
 
     subjects = _validate_subjects(raw.get("subjects", []))

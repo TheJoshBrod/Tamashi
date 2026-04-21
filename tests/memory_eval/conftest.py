@@ -12,14 +12,11 @@ fixtures that did complete.
 """
 from __future__ import annotations
 
-import hashlib
 import os
-import random
 from pathlib import Path
 
 import pytest
 
-_EMBED_DIM = 16
 _REPORT_DIR = Path(__file__).parent / "_reports"
 
 
@@ -89,33 +86,6 @@ def pytest_sessionfinish(session, exitstatus):
             summary_keys=["subject_match_rate", "relation_match_rate", "hallucination_rate"],
         )
         (_REPORT_DIR / "extractor.md").write_text(md)
-
-
-def _det_embed(text: str) -> list[float]:
-    """Deterministic unit-norm pseudo-embedding keyed by md5(text).
-
-    The retrieval harness does NOT use this for scoring — it uses the real
-    fastembed model on the production vector_store. This helper exists so
-    individual unit tests can swap in a predictable vector for isolation.
-    """
-    seed = int(hashlib.md5(text.encode()).hexdigest(), 16)
-    rng = random.Random(seed)
-    vec = [rng.gauss(0, 1) for _ in range(_EMBED_DIM)]
-    norm = sum(x * x for x in vec) ** 0.5
-    return [x / norm for x in vec]
-
-
-@pytest.fixture
-def isolated_store(tmp_path, monkeypatch):
-    """Fresh SubjectStore pointed at a temp SQLite; clears Jac load cache."""
-    import memory.store as store_mod
-    import memory.bridge as bridge_mod
-
-    fresh_ss = store_mod.SubjectStore(db_path=str(tmp_path / "eval.db"))
-    monkeypatch.setattr(store_mod, "subject_store", fresh_ss)
-    monkeypatch.setattr(bridge_mod, "subject_store", fresh_ss)
-    monkeypatch.setattr(bridge_mod, "_loaded_users", set())
-    yield fresh_ss
 
 
 @pytest.fixture

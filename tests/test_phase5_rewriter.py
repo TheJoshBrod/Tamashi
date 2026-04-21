@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from conftest import _uid
 from memory.rewriter import _validate_rewrite, _build_prompt
 
@@ -131,18 +129,6 @@ def test_build_prompt_contains_required_sections():
 # ---------------------------------------------------------------------------
 # Per-subject lock: concurrent rewrite_subject → at most one LLM call
 # ---------------------------------------------------------------------------
-
-@pytest.fixture
-def isolated_store(tmp_path, monkeypatch):
-    import memory.store as store_mod
-    import memory.bridge as bridge_mod
-
-    fresh_ss = store_mod.SubjectStore(db_path=str(tmp_path / "mem.db"))
-    monkeypatch.setattr(store_mod, "subject_store", fresh_ss)
-    monkeypatch.setattr(bridge_mod, "subject_store", fresh_ss)
-    monkeypatch.setattr(bridge_mod, "_loaded_users", set())
-    yield fresh_ss
-
 
 def test_concurrent_rewrite_calls_llm_at_most_once(isolated_store, monkeypatch):
     """Two concurrent rewrite_subject tasks for the same subject hit the LLM at most once.

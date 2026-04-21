@@ -1,7 +1,5 @@
-"""Phase 1 regression tests — the three P0 fixes from merged-pan.md.
+"""Phase 1 regression tests — three P0 fixes pinned as invariants.
 
-These tests pin the correctness guarantees of the Phase 1 bug fixes so future
-refactors cannot silently reintroduce the bugs:
   - P0 #1: relations rehydrate from SQLite on cache-empty LoadSubjects
   - P0 #2: subject_events WAL survives concurrent appends during a rewrite
   - P0 #3: IngestSubjects deduplicates (src, kind, tgt) edges
@@ -9,30 +7,14 @@ refactors cannot silently reintroduce the bugs:
 Run with:
     env/bin/python3 -m pytest tests/test_phase1_fixes.py -v
 """
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import pytest
 
 from conftest import _uid
 
 
 @pytest.fixture(autouse=True)
-def isolated_store(tmp_path, monkeypatch):
-    """Each test gets its own SQLite db and a fresh bridge cache."""
-    db_file = str(tmp_path / "test_memory.db")
-
-    import memory.store as store_mod
-    fresh_store = store_mod.SubjectStore(db_path=db_file)
-    monkeypatch.setattr(store_mod, "subject_store", fresh_store)
-
-    import memory.bridge as bridge_mod
-    monkeypatch.setattr(bridge_mod, "subject_store", fresh_store)
-    monkeypatch.setattr(bridge_mod, "_loaded_users", set())
-
-    yield fresh_store
+def _autouse_isolation(isolated_store):
+    yield isolated_store
 
 
 # --- P0 #2: WAL race fix ---
@@ -76,6 +58,58 @@ def test_delete_events_by_ids_empty_is_noop(isolated_store):
     assert store.get_event_count(u, "Koda") == 1
 
 
+# --- Phase 1.5: get_subject_context rehydrates recent_events from subject_events ---
+
+def test_get_subject_context_wal_join_preserves_ui_contract():
+    """`recent_events` in the context response is sourced from subject_events.
+
+    The UI (display/memory.js) reads `subject.recent_events` to render the WAL
+    badge. After Phase 1.5 the Jac node no longer carries the list, so bridge
+    must rehydrate from the WAL table. Order must match insertion order.
+    """
+    from memory import bridge
+
+    u = _uid("wal_join")
+    subjects = [
+        {"name": "Koda", "summary": "a dog", "description_delta": "Koda is a dog",
+         "subject_type": "object"},
+    ]
+    bridge.ingest_subjects(u, subjects, [])
+    # Second ingest appends a delta to the existing subject — becomes a WAL row.
+    bridge.ingest_subjects(
+        u,
+        [{"name": "Koda", "summary": "a dog", "description_delta": "Koda loves walks",
+          "subject_type": "object"}],
+        [],
+    )
+    bridge.ingest_subjects(
+        u,
+        [{"name": "Koda", "summary": "a dog", "description_delta": "Koda is three",
+          "subject_type": "object"}],
+        [],
+    )
+
+    ctx = bridge.get_subject_context(u, "Koda")
+    assert ctx is not None
+    assert ctx["subject"]["recent_events"] == ["Koda loves walks", "Koda is three"]
+
+
+def test_get_subject_context_wal_empty_returns_list():
+    """Empty WAL returns `[]`, not None or missing key — UI must not crash."""
+    from memory import bridge
+
+    u = _uid("wal_empty")
+    bridge.ingest_subjects(
+        u,
+        [{"name": "Koda", "summary": "a dog", "description_delta": "Koda is a dog",
+          "subject_type": "object"}],
+        [],
+    )
+    ctx = bridge.get_subject_context(u, "Koda")
+    assert ctx is not None
+    assert ctx["subject"]["recent_events"] == []
+
+
 # --- P0 #3: edge dedup ---
 
 def test_ingest_deduplicates_identical_edge():
@@ -103,6 +137,38 @@ def test_ingest_deduplicates_identical_edge():
 
 
 # --- P0 #1: relations rehydrate on cache-empty load ---
+
+def test_load_subjects_twice_does_not_duplicate_edges():
+    """LoadSubjects must be idempotent: re-running against the same User node
+    with the same SQLite rows must not re-add Relates edges. The walker header
+    promises this; this test pins it in place.
+    """
+    from jaclang.lib import spawn, root
+    from memory.walkers import GetOrCreateUser, LoadSubjects
+
+    from memory import bridge
+    import memory.bridge as bridge_mod
+
+    u = _uid("loadtwice")
+    subjects = [
+        {"name": "User", "summary": "the user", "description_delta": "the user",
+         "subject_type": "person"},
+        {"name": "Koda", "summary": "the dog", "description_delta": "Koda is a dog",
+         "subject_type": "object"},
+    ]
+    relations = [{"source": "User", "kind": "has_pet", "target": "Koda"}]
+    bridge.ingest_subjects(u, subjects, relations)
+
+    persisted = bridge_mod.subject_store.get_subjects(u, limit=1000)
+    persisted_rel = bridge_mod.subject_store.get_relations(u)
+    user_node = spawn(GetOrCreateUser(user_id=u), root()).reports[0]
+
+    spawn(LoadSubjects(subjects=persisted, relations=persisted_rel), user_node)
+    spawn(LoadSubjects(subjects=persisted, relations=persisted_rel), user_node)
+
+    edges = [e for e in bridge.get_full_graph(u)["edges"] if e["kind"] == "has_pet"]
+    assert len(edges) == 1, f"Expected 1 has_pet edge, got {edges}"
+
 
 def test_relations_rehydrate_after_cache_flush():
     """Simulates process restart: clear the in-process Jac cache and verify that
@@ -136,8 +202,8 @@ def test_relations_rehydrate_after_cache_flush():
     con = sqlite3.connect(bridge_mod.subject_store._db_path)
     try:
         con.execute(
-            "INSERT INTO memory_subjects (user_id, name, summary, description, subject_type, recent_events, node_jid) "
-            "SELECT ?, name, summary, description, subject_type, recent_events, node_jid FROM memory_subjects WHERE user_id = ?",
+            "INSERT INTO memory_subjects (user_id, name, summary, description, subject_type, node_jid) "
+            "SELECT ?, name, summary, description, subject_type, node_jid FROM memory_subjects WHERE user_id = ?",
             (fresh_uid, u),
         )
         con.execute(
@@ -158,3 +224,75 @@ def test_relations_rehydrate_after_cache_flush():
 
     edges = [e for e in graph["edges"] if e["kind"] == "wants"]
     assert len(edges) == 1, f"Expected 'wants' edge to rehydrate, got {graph['edges']}"
+
+
+# --- Phase 1.5 Commit 2: recent_events column migration + drop ---
+
+def test_legacy_recent_events_column_is_migrated_and_dropped(tmp_path):
+    """Old databases with a `recent_events` JSON column must:
+
+    1. Copy pending events into `subject_events` (migration)
+    2. Drop the legacy column so the new schema is free of it (capstone)
+
+    Both steps must be idempotent — re-constructing SubjectStore a second time
+    against the post-drop DB is a no-op.
+    """
+    import sqlite3
+    from memory.store import SubjectStore
+
+    db = tmp_path / "legacy.db"
+
+    con = sqlite3.connect(db)
+    try:
+        con.execute(
+            """
+            CREATE TABLE memory_subjects (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id      TEXT    NOT NULL,
+                name         TEXT    NOT NULL,
+                summary      TEXT    NOT NULL DEFAULT '',
+                description  TEXT    NOT NULL DEFAULT '',
+                subject_type TEXT    NOT NULL DEFAULT 'other',
+                recent_events TEXT   NOT NULL DEFAULT '[]',
+                node_jid     TEXT,
+                created_at   TEXT    DEFAULT (datetime('now')),
+                updated_at   TEXT    DEFAULT (datetime('now'))
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO memory_subjects
+                (user_id, name, summary, description, subject_type, recent_events)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("u-legacy", "Koda", "a dog", "Koda is a dog", "object",
+             '["Koda loves walks", "Koda is three"]'),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    store = SubjectStore(db_path=str(db))
+
+    events = store.get_events("u-legacy", "Koda")
+    assert [e["payload"] for e in events] == ["Koda loves walks", "Koda is three"]
+
+    con = sqlite3.connect(db)
+    try:
+        cols = {r[1] for r in con.execute("PRAGMA table_info(memory_subjects)").fetchall()}
+    finally:
+        con.close()
+
+    if sqlite3.sqlite_version_info >= (3, 35, 0):
+        assert "recent_events" not in cols, (
+            f"Expected recent_events column dropped on sqlite {sqlite3.sqlite_version}, got {cols}"
+        )
+    else:
+        assert "recent_events" in cols
+
+    # Second construction must be a no-op: no duplicate events, no crash on the
+    # now-missing column.
+    SubjectStore(db_path=str(db))
+    events_again = store.get_events("u-legacy", "Koda")
+    assert [e["payload"] for e in events_again] == ["Koda loves walks", "Koda is three"]

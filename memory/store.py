@@ -3,20 +3,23 @@
 Jac library mode is in-memory only (no cross-restart persistence).
 This module provides durable storage: every Subject and Relates edge written
 to the Jac graph is also written here. On startup or on cache miss, subjects
-(including their recent_events WAL) are reloaded from SQLite back into the
-Jac graph.
+are reloaded from SQLite back into the Jac graph. Pending per-subject facts
+live in the `subject_events` WAL table (append-only, drained by the rewriter).
 
 Tables live in sessions.db alongside the messages table.
 """
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
 from core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class SubjectStore:
@@ -48,7 +51,6 @@ class SubjectStore:
                     summary      TEXT    NOT NULL DEFAULT '',
                     description  TEXT    NOT NULL DEFAULT '',
                     subject_type TEXT    NOT NULL DEFAULT 'other',
-                    recent_events TEXT   NOT NULL DEFAULT '[]',
                     node_jid     TEXT,
                     created_at   TEXT    DEFAULT (datetime('now')),
                     updated_at   TEXT    DEFAULT (datetime('now'))
@@ -76,13 +78,8 @@ class SubjectStore:
                 ON memory_relations(user_id, src_name, kind, tgt_name)
             """)
 
-            # Authoritative per-event WAL. Replaces the JSON recent_events column
-            # as the source of truth consumed by the rewriter. Each append gets a
-            # stable autoincrement id so the rewriter can snapshot [ids it saw],
-            # spend 10s in the LLM, then atomically delete EXACTLY those ids —
-            # any new append during the LLM call gets a new id and survives the
-            # delete. The JSON recent_events column remains as a derived cache,
-            # kept in sync by the ingest/rewrite paths.
+            # Authoritative per-event WAL — id is the snapshot key the rewriter
+            # uses to atomically consume only the events it saw.
             con.execute("""
                 CREATE TABLE IF NOT EXISTS subject_events (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,14 +95,24 @@ class SubjectStore:
             """)
 
             self._migrate_recent_events_to_subject_events(con)
+            self._drop_recent_events_column(con)
+
+    @staticmethod
+    def _has_recent_events_column(con) -> bool:
+        cols = {r["name"] for r in con.execute("PRAGMA table_info(memory_subjects)").fetchall()}
+        return "recent_events" in cols
 
     def _migrate_recent_events_to_subject_events(self, con) -> None:
         """One-time, idempotent: copy JSON recent_events into the subject_events table.
 
         Per-(user_id, subject_name) guard: skip any subject that already has rows
         in subject_events, so re-running this on already-migrated databases is a
-        no-op. Runs inside the caller's transaction.
+        no-op. Runs inside the caller's transaction. No-op if the legacy column
+        is already gone (fresh install or post-drop restart).
         """
+        if not self._has_recent_events_column(con):
+            return
+
         existing = con.execute(
             "SELECT DISTINCT user_id, subject_name FROM subject_events"
         ).fetchall()
@@ -135,6 +142,23 @@ class SubjectStore:
                     (r["user_id"], r["name"], payload, created_at),
                 )
 
+    def _drop_recent_events_column(self, con) -> None:
+        """Drop the legacy `recent_events` column if still present.
+
+        Must run AFTER the WAL migration so un-migrated rows are never lost.
+        ALTER TABLE ... DROP COLUMN requires SQLite ≥ 3.35; on older runtimes the
+        column lingers as dead weight until the host is upgraded.
+        """
+        if not self._has_recent_events_column(con):
+            return
+        if sqlite3.sqlite_version_info < (3, 35, 0):
+            logger.warning(
+                "sqlite %s < 3.35 — leaving legacy memory_subjects.recent_events column in place",
+                sqlite3.sqlite_version,
+            )
+            return
+        con.execute("ALTER TABLE memory_subjects DROP COLUMN recent_events")
+
     # --- Subjects ---
 
     @staticmethod
@@ -144,7 +168,6 @@ class SubjectStore:
             "summary": r["summary"],
             "description": r["description"],
             "subject_type": r["subject_type"],
-            "recent_events": json.loads(r["recent_events"]),
             "jid": r["node_jid"],
             "created_at": r["created_at"] or "",
             "updated_at": r["updated_at"] or "",
@@ -157,7 +180,6 @@ class SubjectStore:
         summary: str,
         description: str,
         subject_type: str,
-        recent_events: list,
         node_jid: str | None = None,
     ) -> None:
         """Insert or update a subject. On conflict (user_id, name), update all fields."""
@@ -165,18 +187,16 @@ class SubjectStore:
             con.execute(
                 """
                 INSERT INTO memory_subjects
-                    (user_id, name, summary, description, subject_type, recent_events, node_jid, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                    (user_id, name, summary, description, subject_type, node_jid, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(user_id, name) DO UPDATE SET
                     summary       = excluded.summary,
                     description   = excluded.description,
                     subject_type  = excluded.subject_type,
-                    recent_events = excluded.recent_events,
                     node_jid      = excluded.node_jid,
                     updated_at    = datetime('now')
                 """,
-                (user_id, name, summary, description, subject_type,
-                 json.dumps(recent_events), node_jid),
+                (user_id, name, summary, description, subject_type, node_jid),
             )
 
     def get_subjects(self, user_id: str, limit: int = 1000) -> list[dict]:
@@ -184,7 +204,7 @@ class SubjectStore:
         with self._conn() as con:
             rows = con.execute(
                 """
-                SELECT name, summary, description, subject_type, recent_events,
+                SELECT name, summary, description, subject_type,
                        node_jid, created_at, updated_at
                 FROM memory_subjects
                 WHERE user_id = ?
@@ -194,24 +214,12 @@ class SubjectStore:
             ).fetchall()
         return [self._row_to_subject(r) for r in rows]
 
-    def update_subject_wal(self, user_id: str, name: str, recent_events: list) -> None:
-        """Update only the recent_events WAL for an existing subject."""
-        with self._conn() as con:
-            con.execute(
-                """
-                UPDATE memory_subjects
-                SET recent_events = ?, updated_at = datetime('now')
-                WHERE user_id = ? AND name = ?
-                """,
-                (json.dumps(recent_events), user_id, name),
-            )
-
     def get_subject_by_jid(self, user_id: str, jid: str) -> dict | None:
         """Return a single subject by node_jid, or None if not found."""
         with self._conn() as con:
             row = con.execute(
                 """
-                SELECT name, summary, description, subject_type, recent_events,
+                SELECT name, summary, description, subject_type,
                        node_jid, created_at, updated_at
                 FROM memory_subjects
                 WHERE user_id = ? AND node_jid = ?
@@ -227,7 +235,7 @@ class SubjectStore:
         with self._conn() as con:
             row = con.execute(
                 """
-                SELECT name, summary, description, subject_type, recent_events,
+                SELECT name, summary, description, subject_type,
                        node_jid, created_at, updated_at
                 FROM memory_subjects
                 WHERE user_id = ? AND name = ?
@@ -244,7 +252,7 @@ class SubjectStore:
         with self._conn() as con:
             rows = con.execute(
                 """
-                SELECT name, summary, description, subject_type, recent_events,
+                SELECT name, summary, description, subject_type,
                        node_jid, created_at, updated_at
                 FROM memory_subjects
                 WHERE user_id = ? AND updated_at >= ?

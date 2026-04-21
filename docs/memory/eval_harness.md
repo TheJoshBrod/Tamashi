@@ -186,4 +186,6 @@ n_fixtures           10
 
 ---
 
+Related: [Graph Schema Topology](schema.md) · [Persistence Layer](persistence.md) · [Consolidation & Maintenance](consolidation.md) · [GraphRAG Retrieval](retrieval.md)
+
 [← Back to Memory Architecture](README.md)

@@ -82,11 +82,28 @@ def _build_prompt(subject: dict, neighbors: list[dict], semantic_nbrs: list[dict
     return "\n".join(lines)
 
 
-def _call_json_llm(system: str, prompt: str, temperature: float = 0) -> dict | None:
+def _strip_json_fences(text: str) -> str:
+    """Anthropic via litellm+json_object sometimes wraps JSON in ```json ... ```
+    fences even when asked for raw JSON. Strip them so json.loads does not
+    silently fail."""
+    s = text.strip()
+    if s.startswith("```"):
+        s = s.split("\n", 1)[1] if "\n" in s else s[3:]
+        if s.endswith("```"):
+            s = s[:-3]
+    return s.strip()
+
+
+def _call_json_llm(
+    system: str,
+    prompt: str,
+    model: str | None = None,
+    temperature: float = 0,
+) -> dict | None:
     """Call the configured LLM with JSON mode. Returns parsed dict or None on error."""
     try:
         resp = litellm.completion(
-            model=settings.rewriter_model,
+            model=model or settings.rewriter_model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
@@ -94,7 +111,7 @@ def _call_json_llm(system: str, prompt: str, temperature: float = 0) -> dict | N
             response_format={"type": "json_object"},
             temperature=temperature,
         )
-        return json.loads(resp.choices[0].message.content)
+        return json.loads(_strip_json_fences(resp.choices[0].message.content))
     except Exception:
         log.exception("LLM call failed")
         return None
@@ -180,11 +197,9 @@ async def rewrite_subject(user_id: str, name: str) -> None:
             subject = ctx["subject"]
             neighbors = ctx["neighbors"]
 
-            # Snapshot pending events from the authoritative WAL (subject_events).
-            # We keep the ids so apply_rewrite can atomically delete exactly the
-            # events we saw — any append that lands during the LLM call gets a new
-            # id and survives. Feed the payloads into the prompt so the LLM sees
-            # the same facts the snapshot captured.
+            # Snapshot ids *before* the LLM call so apply_rewrite can atomically
+            # delete exactly the events we saw; concurrent appends get new ids
+            # and survive.
             pending = await asyncio.to_thread(subject_store.get_events, user_id, name)
             if not pending:
                 log.debug("rewrite: subject %r WAL already drained for %s", name, user_id)
@@ -230,8 +245,6 @@ async def rewrite_subject(user_id: str, name: str) -> None:
             if not rewrite:
                 return
 
-            # 5. Apply mutations (Jac + SQLite + Qdrant). Passing the id snapshot
-            #    makes the WAL consumption atomic at the SQLite layer.
             await asyncio.to_thread(
                 bridge.apply_rewrite,
                 user_id, name,

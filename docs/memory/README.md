@@ -12,6 +12,7 @@ Tamashi uses a three-layer hybrid memory system focused on entity-centric **Subj
 
 The memory system's intricacies are documented in the following guides:
 - [Graph Schema Topology](schema.md) — Details the Jac graph nodes, edges, and allowed relation kinds.
+- [Persistence Layer](persistence.md) — SQLite tables, rehydration, and the `subject_events` WAL's atomic snapshot-id drain.
 - [Consolidation & Maintenance](consolidation.md) — Explains how the event-driven WAL rewrites subjects without nightly batches.
 - [GraphRAG Retrieval](retrieval.md) — Covers how the agent retrieves memory context via vector searches and graph traversals.
 - [Eval Harness (Phase 2 Baseline)](eval_harness.md) — Measurement-first fixture harness that every downstream LLM-tuning phase must diff against.
@@ -34,12 +35,15 @@ Messages older than the window fall out of every LLM prompt but are never delete
 
 ## Persistence
 
-Jac library mode is **in-memory only** — graph state does not survive process restart. `memory/store.py` provides a SQLite write-through:
+Jac library mode is **in-memory only** — graph state does not survive process restart. `memory/store.py` provides a SQLite write-through across three tables:
 
-- **Subjects**: Stored in `memory_subjects` table.
-- **Relations**: Stored in `memory_relations` table.
+- `memory_subjects` — durable Subject identity.
+- `memory_relations` — durable `Relates` edges.
+- `subject_events` — append-only per-subject WAL of pending facts; drained atomically by the rewriter using a snapshot of autoincrement ids.
 
-On first access for a user after restart, `bridge._ensure_loaded()` reloads their subjects from SQLite back into the Jac graph via the `LoadSubjects` walker. **`Relates` edges are not reloaded** — they are read directly from SQLite when needed (graph UI, rewriter context). The Jac graph only rebuilds edges as new facts are consolidated during active use.
+On first access for a user after restart, `bridge._ensure_loaded()` replays both subjects and their `Relates` edges into the Jac graph via the `LoadSubjects` walker.
+
+Full details — including the WAL atomicity contract and the legacy `recent_events` column migration — live in the [Persistence Layer](persistence.md) doc.
 
 ---
 

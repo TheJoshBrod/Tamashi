@@ -11,52 +11,7 @@ Tests cover bridge.retrieve_context end-to-end:
 """
 from __future__ import annotations
 
-import hashlib
-import random
-
-import pytest
-
 from conftest import _uid
-
-_EMBED_DIM = 16
-
-
-def _det_embed(text: str) -> list[float]:
-    seed = int(hashlib.md5(text.encode()).hexdigest(), 16)
-    rng = random.Random(seed)
-    vec = [rng.gauss(0, 1) for _ in range(_EMBED_DIM)]
-    norm = sum(x * x for x in vec) ** 0.5
-    return [x / norm for x in vec]
-
-
-@pytest.fixture
-def qdrant_store():
-    from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams
-    from memory.vector import QdrantMemoryStore
-    from core.config import settings
-
-    store = QdrantMemoryStore()
-    client = QdrantClient(":memory:")
-    client.create_collection(
-        collection_name=settings.subject_collection,
-        vectors_config=VectorParams(size=_EMBED_DIM, distance=Distance.COSINE),
-    )
-    store._client = client
-    store._embed = _det_embed
-    return store
-
-
-@pytest.fixture
-def isolated_store(tmp_path, monkeypatch):
-    import memory.store as store_mod
-    import memory.bridge as bridge_mod
-
-    fresh_ss = store_mod.SubjectStore(db_path=str(tmp_path / "mem.db"))
-    monkeypatch.setattr(store_mod, "subject_store", fresh_ss)
-    monkeypatch.setattr(bridge_mod, "subject_store", fresh_ss)
-    monkeypatch.setattr(bridge_mod, "_loaded_users", set())
-    yield fresh_ss
 
 
 # ---------------------------------------------------------------------------

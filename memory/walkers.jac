@@ -17,9 +17,9 @@ walker GetOrCreateUser {
 }
 
 # Write a pre-deduplicated batch of Subject nodes under a User node.
-# Each subject dict has: name, summary, description_delta, subject_type, recent_events.
+# Each subject dict has: name, summary, description_delta, subject_type.
 # bridge.py merges intra-batch duplicates before calling this walker.
-# Reports {jid, name, is_new, recent_events} for each subject processed.
+# Reports {jid, name, is_new} for each subject processed.
 walker IngestSubjects {
     has subjects: list;
     has relations: list;
@@ -31,18 +31,15 @@ walker IngestSubjects {
             tsummary: str = str(s["summary"]);
             tdelta: str = str(s["description_delta"]);
             ttype: str = str(s["subject_type"]);
-            tevents: list = list(s["recent_events"]);
 
             existing = [-->][?:Subject, name==tname];
             if existing {
                 sub = existing[0];
-                sub.recent_events = sub.recent_events + tevents;
                 sub.updated_at = self.now;
                 report {
                     "jid": jid(sub),
                     "name": tname,
-                    "is_new": False,
-                    "recent_events": sub.recent_events
+                    "is_new": False
                 };
             } else {
                 new_sub = here ++> Subject(
@@ -56,8 +53,7 @@ walker IngestSubjects {
                 report {
                     "jid": jid(new_sub[0]),
                     "name": tname,
-                    "is_new": True,
-                    "recent_events": []
+                    "is_new": True
                 };
             }
         }
@@ -108,7 +104,6 @@ walker LoadSubjects {
             tsummary: str = str(s["summary"]);
             tdesc: str = str(s["description"]);
             ttype: str = str(s["subject_type"]);
-            tevents: list = list(s["recent_events"]);
             tcreated: str = str(s["created_at"]);
             tupdated: str = str(s["updated_at"]);
 
@@ -122,8 +117,7 @@ walker LoadSubjects {
                     description=tdesc,
                     subject_type=ttype,
                     created_at=tcreated,
-                    updated_at=tupdated,
-                    recent_events=tevents
+                    updated_at=tupdated
                 );
             }
         }
@@ -140,12 +134,24 @@ walker LoadSubjects {
             tgt_nodes = [-->][?:Subject, name==rtgt];
             if src_nodes {
                 if tgt_nodes {
-                    src_nodes[0] +>: Relates(
-                        kind=rkind,
-                        weight=rweight,
-                        created_at=rcreated,
-                        updated_at=rupdated
-                    ) :+> tgt_nodes[0];
+                    src = src_nodes[0];
+                    tgt = tgt_nodes[0];
+                    tgt_jid: str = jid(tgt);
+                    connected = [src ->:Relates:kind==rkind:->];
+                    already_exists: bool = False;
+                    for n in connected {
+                        if jid(n) == tgt_jid {
+                            already_exists = True;
+                        }
+                    }
+                    if not already_exists {
+                        src +>: Relates(
+                            kind=rkind,
+                            weight=rweight,
+                            created_at=rcreated,
+                            updated_at=rupdated
+                        ) :+> tgt;
+                    }
                 }
             }
         }
@@ -282,7 +288,6 @@ walker GetSubjectContext {
                     "summary": sub.summary,
                     "description": sub.description,
                     "subject_type": sub.subject_type,
-                    "recent_events": sub.recent_events,
                     "neighbors": neighbors
                 };
                 disengage;
@@ -291,7 +296,8 @@ walker GetSubjectContext {
     }
 }
 
-# Clear the recent_events WAL for a subject and write new summary/description.
+# Write new summary/description for a subject after a rewrite.
+# WAL consumption happens in SQLite (bridge → subject_store.delete_events_by_ids).
 walker ClearSubjectWAL {
     has name: str;
     has new_summary: str;
@@ -305,7 +311,6 @@ walker ClearSubjectWAL {
             if sub.name == tname {
                 sub.summary = self.new_summary;
                 sub.description = self.new_description;
-                sub.recent_events = [];
                 sub.updated_at = self.now;
                 report {"status": "success", "jid": jid(sub)};
                 disengage;

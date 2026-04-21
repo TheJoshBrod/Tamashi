@@ -6,11 +6,6 @@ Run with: python -m pytest tests/test_phase3_graphrag.py -v
 """
 from __future__ import annotations
 
-import hashlib
-import random
-
-import pytest
-
 from conftest import _uid
 
 SAMPLE_SUBJECTS = [
@@ -33,54 +28,6 @@ SAMPLE_SUBJECTS = [
         "subject_type": "goal",
     },
 ]
-
-_EMBED_DIM = 16  # small fixed size — no real model needed
-
-
-def _det_embed(text: str) -> list[float]:
-    """Deterministic 16-dim unit vector keyed off text content.
-
-    Same text → same vector (cosine similarity 1.0 with itself).
-    Different texts → different vectors (low similarity).
-    """
-    seed = int(hashlib.md5(text.encode()).hexdigest(), 16)
-    rng = random.Random(seed)
-    vec = [rng.gauss(0, 1) for _ in range(_EMBED_DIM)]
-    norm = sum(x * x for x in vec) ** 0.5
-    return [x / norm for x in vec]
-
-
-@pytest.fixture
-def qdrant_store():
-    """Fresh QdrantMemoryStore backed by an in-memory Qdrant client."""
-    from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, VectorParams
-    from memory.vector import QdrantMemoryStore
-    from core.config import settings
-
-    store = QdrantMemoryStore()
-    client = QdrantClient(":memory:")
-    client.create_collection(
-        collection_name=settings.subject_collection,
-        vectors_config=VectorParams(size=_EMBED_DIM, distance=Distance.COSINE),
-    )
-    store._client = client
-    store._embed = _det_embed  # bypass fastembed entirely
-    return store
-
-
-@pytest.fixture
-def isolated_store(tmp_path, monkeypatch):
-    """Fresh SubjectStore + cleared _loaded_users for Jac graph isolation."""
-    import memory.store as store_mod
-    import memory.bridge as bridge_mod
-
-    fresh_ss = store_mod.SubjectStore(db_path=str(tmp_path / "mem.db"))
-    monkeypatch.setattr(store_mod, "subject_store", fresh_ss)
-    monkeypatch.setattr(bridge_mod, "subject_store", fresh_ss)
-    monkeypatch.setattr(bridge_mod, "_loaded_users", set())
-    yield fresh_ss
-
 
 # ---------------------------------------------------------------------------
 # Tests 1-3 — QdrantMemoryStore (memory/vector.py)

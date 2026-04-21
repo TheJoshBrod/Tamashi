@@ -71,8 +71,8 @@ def _get_user_node(user_id: str):
 def _ensure_loaded(user_id: str) -> None:
     """If this user's subjects aren't in the Jac graph yet, load them from SQLite.
 
-    Preserves recent_events across restarts: the SQLite store persists the WAL,
-    and this function rehydrates it into the in-memory Subject nodes.
+    Subjects and relations live durably in SQLite; the per-subject pending-fact
+    WAL lives in `subject_events` and is read directly by the rewriter.
 
     Double-checked locking: fast path is lock-free when the user is already
     loaded; contention only occurs on first post-restart access.
@@ -137,8 +137,6 @@ def ingest_subjects(
                 "summary": s.get("summary", ""),
                 "description_delta": s["description_delta"],
                 "subject_type": s.get("subject_type", "other") or "other",
-                # recent_events = new deltas to APPEND to the existing node list
-                "recent_events": [s["description_delta"]],
             }
 
     deduped = list(merged.values())
@@ -158,30 +156,23 @@ def ingest_subjects(
         name = str(report.get("name", ""))
         is_new = bool(report.get("is_new", False))
         jid_val = str(report.get("jid", ""))
-        recent_events = list(report.get("recent_events", []))
 
         if is_new:
             new_jids[name] = jid_val
             s_data = merged[name]
+            # New subjects: delta is the initial `description`; do not append
+            # it to the WAL — that would double-count it against the threshold.
             subject_store.upsert_subject(
                 user_id=user_id,
                 name=name,
                 summary=s_data["summary"],
                 description=s_data["description_delta"],
                 subject_type=s_data["subject_type"],
-                recent_events=recent_events,
                 node_jid=jid_val,
             )
-            # New subjects: the delta lives in `description` as the initial
-            # description — don't double-record it into the event WAL.
         else:
-            subject_store.update_subject_wal(user_id, name, recent_events)
-            # Dual-write the same delta into subject_events as the authoritative
-            # per-event WAL. The rewriter consumes from here by id, so concurrent
-            # appends during the LLM call survive the rewrite's delete.
             subject_store.append_event(user_id, name, merged[name]["description_delta"])
 
-        # Authoritative threshold check reads the subject_events table.
         if subject_store.get_event_count(user_id, name) >= settings.subject_wal_threshold:
             needs_rewrite.append(name)
 
@@ -392,7 +383,6 @@ def update_subject(
         summary=summary,
         description=description,
         subject_type=subject_type,
-        recent_events=[], # Clear WAL on manual edit? Or keep it? Let's clear it.
         node_jid=jid,
     )
     
@@ -471,6 +461,7 @@ def get_subject_context(user_id: str, name: str) -> dict | None:
             "edge_kind": kinds[0] if kinds else "related_to",
         })
 
+    pending = subject_store.get_events(user_id, name)
     return {
         "subject": {
             "jid": raw["jid"],
@@ -478,7 +469,7 @@ def get_subject_context(user_id: str, name: str) -> dict | None:
             "summary": raw["summary"],
             "description": raw["description"],
             "subject_type": raw["subject_type"],
-            "recent_events": raw["recent_events"],
+            "recent_events": [e["payload"] for e in pending],
         },
         "neighbors": enriched_neighbors,
     }
@@ -491,7 +482,7 @@ def apply_rewrite(
     new_description: str,
     add_edges: list[dict],
     remove_edges: list[dict],
-    consumed_event_ids: list[int] | None = None,
+    consumed_event_ids: list[int],
 ) -> dict:
     """Apply a rewriter's mutations: consume the snapshot of WAL ids the rewriter
     actually saw, update summary/description, mutate edges.
@@ -500,12 +491,12 @@ def apply_rewrite(
 
     consumed_event_ids is the set of subject_events.id values the rewriter
     snapshotted *before* the LLM call. We delete exactly those ids — any event
-    that arrived during the LLM call got a new id and survives.
+    that arrived during the LLM call got a new id and survives. The argument is
+    required so a caller cannot silently regress to non-atomic consumption.
     """
     _ensure_loaded(user_id)
     user_node = _get_user_node(user_id)
 
-    # 1. Update Jac in-memory graph (clears WAL + writes new summary/description)
     result = spawn(ClearSubjectWAL(
         name=name,
         new_summary=new_summary,
@@ -517,32 +508,23 @@ def apply_rewrite(
     if result.reports and result.reports[0].get("status") == "success":
         jid_str = str(result.reports[0].get("jid", ""))
 
-    # 2. Look up subject metadata for SQLite upsert and Qdrant re-embed
     meta = subject_store.get_subject_by_name(user_id, name)
     subject_type = meta["subject_type"] if meta else "other"
     if not jid_str and meta:
         jid_str = meta.get("jid")
 
-    # 3. Atomic consumption: delete exactly the event ids the rewriter saw.
-    #    Concurrent appends during the LLM call got new ids and survive.
     if consumed_event_ids:
         subject_store.delete_events_by_ids(consumed_event_ids)
 
-    # 4. Persist updated subject to SQLite. The JSON recent_events column is
-    #    a derived cache — sync it from the remaining subject_events rows so
-    #    concurrent appends are not clobbered on the next LoadSubjects.
-    remaining_events = [e["payload"] for e in subject_store.get_events(user_id, name)]
     subject_store.upsert_subject(
         user_id=user_id,
         name=name,
         summary=new_summary,
         description=new_description,
         subject_type=subject_type,
-        recent_events=remaining_events,
         node_jid=jid_str,
     )
 
-    # 5. Add new edges (with confidence-derived weights from the rewriter)
     if add_edges:
         edge_dicts = [
             {"source": name, "kind": e["kind"], "target": e["target"], "weight": e.get("weight", 1.0)}
@@ -550,11 +532,9 @@ def apply_rewrite(
         ]
         ingest_subjects(user_id, [], edge_dicts)
 
-    # 6. Remove edges
     for edge in remove_edges:
         delete_relation(user_id, name, edge["kind"], edge["target"])
 
-    # 7. Re-embed in Qdrant (idempotent via stable node_id hash)
     if jid_str:
         try:
             vector_store.upsert(jid_str, user_id, "subject", name, summary=new_summary, subject_type=subject_type, description=new_description)
